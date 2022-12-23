@@ -1,18 +1,26 @@
 module Flate
-export hello, domath
 
-"""
-    hello(who::String)
+include("gotypes.jl")
+import .GoTypes: Go
 
-Return "Hello, `who`".
-"""
-hello(who::String) = "Hello, $who"
+include("consts.jl")
+include("token.jl")
+include("huffman_code.jl")
+include("huffman_bit_writer.jl")
+include("dict_decoder.jl")
+include("deflatefast.jl")
+include("deflate.jl")
+include("inflate.jl")
 
-"""
-    domath(x::Number)
+# huffOffset is a static offset encoder used for huffman only encoding.
+# It can be reused since we will not be encoding offset values.
+const huffOffset = Ref{HuffmanEncoder}()
 
-Return `x + 5`.
-"""
-domath(x::Number) = x + 5
+function __init__()
+    offsetFreq = Go.Slice(Int32, offsetCodeCount)
+    offsetFreq[0] = 1
+    huffOffset[] = newHuffmanEncoder(offsetCodeCount)
+    generate(huffOffset[], offsetFreq, 15)
+end
 
 end
