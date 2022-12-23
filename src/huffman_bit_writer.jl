@@ -414,7 +414,7 @@ function writeBlock(
     end
     # Stored bytes?
     if storable && ss < size
-        writeStoredHeader(w, len(input), eof)
+        writeStoredHeader(w, Go.len(input), eof)
         writeBytes(w, input)
         return
     end
@@ -444,7 +444,7 @@ function writeBlockDynamic(
     if w.err !== nothing
         return
     end
-    tokens = Go.append(tokens, endBlockMarker)
+    tokens = Go.append(tokens, Token(endBlockMarker))
     numLiterals, numOffsets = indexTokens(w, tokens)
     # Generate codegen and codegenFrequencies, which indicates how to encode
     # the literalEncoding and the offsetEncoding.
@@ -454,7 +454,7 @@ function writeBlockDynamic(
     # Store bytes, if we don't get a reasonable improvement.
     ssize, storable = storedSize(w, input)
     if (storable && ssize < size + size >> 4)
-        writeStoredHeader(w, len(input), eof)
+        writeStoredHeader(w, Go.len(input), eof)
         writeBytes(w, input)
         return
     end

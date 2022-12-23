@@ -222,7 +222,7 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
         end
         tries -= 1
     end
-    return len, offset, ok
+    return length, offset, ok
 end
 
 function writeStoredBlock(d::Compressor, buf::Go.Slice{UInt8})# ::error
