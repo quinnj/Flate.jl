@@ -26,17 +26,12 @@ function newHuffmanBitWriter(w::IO)# ::HuffmanBitWriter
     )
 end
 
-function reset(w::HuffmanBitWriter, writer::IO)
+function Base.reset(w::HuffmanBitWriter, writer::IO)
     w.writer = writer
-    w.bits, w.nbits, w.nbytes, w.err = 0, 0, 0, nothing
+    w.bits, w.nbits, w.nbytes = 0, 0, 0
 end
 
-function flush(w::HuffmanBitWriter)
-    if w.err !== nothing
-        w.nbits = 0
-        return
-    end
-
+function Base.flush(w::HuffmanBitWriter)
     n = w.nbytes
     while w.nbits != 0
         w.bytes[n] = (w.bits) % UInt8
@@ -55,17 +50,10 @@ function flush(w::HuffmanBitWriter)
 end
 
 function Base.write(w::HuffmanBitWriter, b::Go.Slice{UInt8})
-    if w.err !== nothing
-        return
-    end
     write(w.writer, b)
 end
 
 function writeBits(w::HuffmanBitWriter, b::Integer, nb::Integer)
-    if w.err !== nothing
-        return
-    end
-
     w.bits |= (UInt64(b) << w.nbits)
     w.nbits += nb
     if w.nbits >= 48
@@ -90,13 +78,9 @@ function writeBits(w::HuffmanBitWriter, b::Integer, nb::Integer)
 end
 
 function writeBytes(w::HuffmanBitWriter, bytes::Go.Slice{UInt8})
-    if w.err !== nothing
-        return
-    end
     n = w.nbytes
     if w.nbits & 7 != 0
-        w.err = InternalError("writeBytes with unfinished bits")
-        return
+        error("writeBytes with unfinished bits")
     end
     while w.nbits != 0
         w.bytes[n] = (w.bits) % UInt8
@@ -262,9 +246,6 @@ function storedSize(w::HuffmanBitWriter, in::Go.Slice{UInt8})# ::Tuple{Int, Bool
 end
 
 function writeCode(w::HuffmanBitWriter, c::HCode)
-    if w.err !== nothing
-        return
-    end
     w.bits |= UInt64(c.code) << w.nbits
     w.nbits += UInt(c.len)
     if w.nbits >= 48
@@ -300,9 +281,6 @@ function writeDynamicHeader(
     numCodegens::Int,
     isEof::Bool,
 )
-    if w.err !== nothing
-        return
-    end
     firstBits::Int32 = 4
     if isEof
         firstBits = 5
@@ -339,9 +317,6 @@ function writeDynamicHeader(
 end
 
 function writeStoredHeader(w::HuffmanBitWriter, length::Int, isEof::Bool)
-    if w.err !== nothing
-        return
-    end
     flag::Int32 = 0
     if isEof
         flag = 1
@@ -353,9 +328,6 @@ function writeStoredHeader(w::HuffmanBitWriter, length::Int, isEof::Bool)
 end
 
 function writeFixedHeader(w::HuffmanBitWriter, isEof::Bool)
-    if w.err !== nothing
-        return
-    end
     # Indicate that we are a fixed Huffman block
     value::Int32 = 2
     if isEof
@@ -375,9 +347,6 @@ function writeBlock(
     eof::Bool,
     input::Go.Slice{UInt8},
 )
-    if w.err !== nothing
-        return
-    end
     tokens = Go.append(tokens, Token(endBlockMarker))
     numLiterals, numOffsets = indexTokens(w, tokens)
     extraBits::Int = 0
@@ -441,9 +410,6 @@ function writeBlockDynamic(
     eof::Bool,
     input::Go.Slice{UInt8},
 )
-    if w.err !== nothing
-        return
-    end
     tokens = Go.append(tokens, Token(endBlockMarker))
     numLiterals, numOffsets = indexTokens(w, tokens)
     # Generate codegen and codegenFrequencies, which indicates how to encode
@@ -521,9 +487,6 @@ function writeTokens(
     leCodes::Go.Slice{HCode},
     oeCodes::Go.Slice{HCode},
 )
-    if w.err !== nothing
-        return
-    end
     for t in tokens
         if UInt32(t) < matchType
             writeCode(w, leCodes[literal(t)])
@@ -555,9 +518,6 @@ end
 # Huffman encoded literals or uncompressed bytes if the
 # results only gains very little from compression.
 function writeBlockHuff(w::HuffmanBitWriter, eof::Bool, input::Go.Slice{UInt8})
-    if w.err !== nothing
-        return
-    end
     for i in eachindex(w.literalFreq)
         w.literalFreq[i] = 0
     end
@@ -615,10 +575,6 @@ function writeBlockHuff(w::HuffmanBitWriter, eof::Bool, input::Go.Slice{UInt8})
             continue
         end
         write(w, w.bytes[begin:n])
-        if w.err !== nothing
-            # Return early in the event of write failures
-            return
-        end
         n = 0
     end
 

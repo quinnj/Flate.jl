@@ -29,9 +29,7 @@ function testWriterEOF(ttype::String, test::huffTest, useInput::Bool)
     else
         error("unknown test type")
     end
-    @test bw.err === nothing
-    Flate.flush(bw)
-    @test bw.err === nothing
+    flush(bw)
     b = Go.Slice(buf)
     @test Go.len(b) != 0
     @test (b[0] & 1) == 1
@@ -45,7 +43,7 @@ function testBlockHuff(in::String, out::String)
     bw = Flate.newHuffmanBitWriter(buf)
     w = bw
     Flate.writeBlockHuff(bw, false, all)
-    Flate.flush(bw)
+    flush(bw)
     got = Go.Slice(buf)
     want = Go.Slice(read(out))
     @test got == want
@@ -54,7 +52,7 @@ function testBlockHuff(in::String, out::String)
     take!(buf)
     Flate.reset(bw, buf)
     Flate.writeBlockHuff(bw, false, all)
-    Flate.flush(bw)
+    flush(bw)
     got = Go.Slice(buf)
     @test got == want
     @info("Reset ok")
@@ -154,7 +152,7 @@ function testBlock(test::huffTest, ttype::String)
         take!(buf)
         Flate.reset(bw, buf)
         writeToType(ttype, bw, test.tokens, input)
-        Flate.flush(bw)
+        flush(bw)
         got = Go.Slice(buf)
         @test got == want
         @info("Reset ok")
@@ -175,7 +173,7 @@ function testBlock(test::huffTest, ttype::String)
     take!(buf)
     Flate.reset(bw, buf)
     writeToType(ttype, bw, test.tokens, Go.Slice(UInt8, 0))
-    Flate.flush(bw)
+    flush(bw)
     got = Go.Slice(buf)
     @test got == wantNI
     @info("Reset ok")
@@ -195,9 +193,7 @@ function writeToType(
     else
         error("unknown test type")
     end
-    @test bw.err === nothing
-    Flate.flush(bw)
-    @test bw.err === nothing
+    flush(bw)
 end
 
 @testset "TestWriteBlock" begin

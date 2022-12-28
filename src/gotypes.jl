@@ -40,7 +40,7 @@ end
 struct Array{T} <: AbstractGoArray{T}
     data::Base.Vector{T}
 
-    function Array(::Type{T}, len::Int) where {T}
+    function Array(::Type{T}, len::Integer) where {T}
         x = new{T}(Base.Vector{T}(undef, len))
         if isbitstype(T)
             # memset to zero out bits
@@ -49,7 +49,7 @@ struct Array{T} <: AbstractGoArray{T}
         return x
     end
 
-    function Array(::Type{T}, len::Int, len2::Int) where {T}
+    function Array(::Type{T}, len::Integer, len2::Integer) where {T}
         x = new{Array{T}}(Base.Vector{Array{T}}(undef, len))
         for i = 1:len
             x.data[i] = Array(T, len2)
@@ -74,14 +74,14 @@ Array(x::T...) where {T} = Array(T, x...)
 Array(::Type{T}, x...) where {T} = Array([convert(T, v) for v in x])
 
 len(x::Array) = length(x.data)
-Base.isassigned(v::Array, i::Int) = isassigned(v.data, i + 1)
+Base.isassigned(v::Array, i::Integer) = isassigned(v.data, i + 1)
 
-Base.@propagate_inbounds function Base.getindex(v::Array, i::Int)
+Base.@propagate_inbounds function Base.getindex(v::Array, i::Integer)
     @boundscheck checkbounds(v, i)
     return v.data[i + 1]
 end
 
-Base.@propagate_inbounds function Base.setindex!(v::Array{T}, val, i::Int) where {T}
+Base.@propagate_inbounds function Base.setindex!(v::Array{T}, val, i::Integer) where {T}
     @boundscheck checkbounds(v, i)
     v.data[i + 1] = convert(T, val)
     return v
@@ -98,30 +98,30 @@ end
 
 Slice(io::IOBuffer) = Slice{UInt8}(io.data, 0, io.size)
 Slice(x::Base.Vector{T}) where {T} = Slice{T}(x, 0, len(x))
-Slice(x::String, i::Int, j::Int) = Slice{UInt8}(unsafe_wrap(Vector{UInt8}, x), i, j)
+Slice(x::String, i::Integer, j::Integer) = Slice{UInt8}(unsafe_wrap(Vector{UInt8}, x), i, j)
 Slice(x::String) = Slice(x, 0, len(x))
-Slice(x::Array{T}, i::Int, j::Int) where {T} = Slice{T}(x.data, i, j)
+Slice(x::Array{T}, i::Integer, j::Integer) where {T} = Slice{T}(x.data, i, j)
 Slice(x::Array) = Slice(x, 0, len(x))
 Slice(::Type{T}, x::T...) where {T} = Slice(Array(T, x...))
 Slice(x::T...) where {T} = Slice(Array(x...))
 
 # Slice constructors that generate Array
-Slice(::Type{T}, len::Int) where {T} = Slice(Array(T, len))
-Slice(::Type{T}, len::Int, cap::Int) where {T} = Slice(Array(T, cap), 0, len)
+Slice(::Type{T}, len::Integer) where {T} = Slice(Array(T, len))
+Slice(::Type{T}, len::Integer, cap::Integer) where {T} = Slice(Array(T, cap), 0, len)
 
 len(v::Base.Vector) = length(v)
 len(v::String) = sizeof(v)
 len(v::Slice) = v.j - v.i
 cap(v::Slice) = len(v.data) - v.i
 
-Base.isassigned(v::Slice, i::Int) = isassigned(v.data, i + v.i + 1)
+Base.isassigned(v::Slice, i::Integer) = isassigned(v.data, i + v.i + 1)
 
-Base.@propagate_inbounds function Base.getindex(v::Slice, i::Int)
+Base.@propagate_inbounds function Base.getindex(v::Slice, i::Integer)
     @boundscheck checkbounds(v, i)
     return v.data[i + v.i + 1]
 end
 
-Base.@propagate_inbounds function Base.setindex!(v::Slice{T}, val, i::Int) where {T}
+Base.@propagate_inbounds function Base.setindex!(v::Slice{T}, val, i::Integer) where {T}
     @boundscheck checkbounds(v, i)
     v.data[i + v.i + 1] = convert(T, val)
     return v
@@ -129,7 +129,7 @@ end
 
 # indexing Array with range produces Slice
 # like go, lo:hi is half-open, so hi is not included in slice
-Base.@propagate_inbounds function Base.getindex(v::Array{T}, r::UnitRange{Int}) where {T}
+Base.@propagate_inbounds function Base.getindex(v::Array{T}, r::UnitRange{<:Integer}) where {T}
     @boundscheck checkbounds(v, r)
     return Slice{T}(v.data, first(r), last(r))
 end
@@ -138,16 +138,16 @@ end
 # we can't just rely on x[0, :] since end lowers
 # to lastindex(x) which is the last *actual* index
 # and not 1 past the last index
-Base.@propagate_inbounds function Base.getindex(v::Array{T}, i::Int, ::Colon) where {T}
+Base.@propagate_inbounds function Base.getindex(v::Array{T}, i::Integer, ::Colon) where {T}
     @boundscheck checkbounds(v, i)
     return Slice{T}(v.data, i, len(v))
 end
 
 # for slices, [lo:]
-Base.@propagate_inbounds Base.getindex(v::Slice, i::Int, ::Colon) = v[i:len(v)]
+Base.@propagate_inbounds Base.getindex(v::Slice, i::Integer, ::Colon) = v[i:len(v)]
 
 # indexing Slice with range produces relative Slice w/ same underlying Array
-Base.@propagate_inbounds function Base.getindex(v::Slice{T}, r::UnitRange{Int}) where {T}
+Base.@propagate_inbounds function Base.getindex(v::Slice{T}, r::UnitRange{<:Integer}) where {T}
     i = first(r) + v.i
     j = max(i, last(r) + v.i)
     @boundscheck begin

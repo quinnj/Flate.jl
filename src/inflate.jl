@@ -3,17 +3,9 @@ struct CorruptInputError
     int64::Int64
 end
 
-function Error(e::CorruptInputError)# ::String
-    return "flate: corrupt input before offset: $e"
-end
-
 #  An InternalError reports an error in the flate code itself.
 struct InternalError
     String::String
-end
-
-function Error(e::InternalError)# ::String
-    return "flate: internal error: $e"
 end
 
 #  Initialize Huffman decoding tables from array of code lengths.
@@ -42,6 +34,8 @@ function init(h::HuffmanDecoder, lengths::Go.Slice{Int})# ::Bool
     #  Count number of codes of each length,
     #  compute min and max length.
     count = Go.Array(Int, maxCodeLen)
+    # min::Int = 0
+    # max::Int = 0
     local min::Int, max::Int
     for n in lengths
         if n == 0
@@ -80,7 +74,7 @@ function init(h::HuffmanDecoder, lengths::Go.Slice{Int})# ::Bool
     #  Exception: To be compatible with zlib, we also need to
     #  accept degenerate single-code codings. See also
     #  TestDegenerateHuffmanCoding.
-    if code != 1 << UInt(max) && (!code == 1 && max == 1)
+    if code != 1 << UInt(max) && !(code == 1 && max == 1)
         return false
     end
 
@@ -186,7 +180,6 @@ mutable struct Decompressor
     step::Function #=(Decompressor)=#
     stepState::Int
     final::Bool
-    err::Exception
     toRead::Go.Slice{UInt8}
     hl::HuffmanDecoder
     hd::Union{Nothing, HuffmanDecoder}
@@ -194,11 +187,14 @@ mutable struct Decompressor
     copyDist::Int
 end
 
+Decompressor(r::IO, bits::Go.Array{Int}, codebits::Go.Array{Int}, dict::DictDecoder, step::Function) =
+    Decompressor(
+        r, 0, 0, 0, HuffmanDecoder(), HuffmanDecoder(), bits, codebits, dict, Go.Array(UInt8, 4), step, 0, false, Go.Slice(UInt8, 0), HuffmanDecoder(), nothing, 0, 0
+    )
+
 function nextBlock(f::Decompressor)
     while f.nb < 1 + 2
-        if (f.err = moreBits(f); f.err !== nothing)
-            return
-        end
+        moreBits(f)
     end
 
     f.final = f.b & 1 == 1
@@ -215,45 +211,36 @@ function nextBlock(f::Decompressor)
         huffmanBlock(f)
     elseif typ == 2
         #  compressed, dynamic Huffman tables
-        if (f.err = readHuffman(f); f.err !== nothing)
-            # pass
-        else
-            f.hl = f.h1
-            f.hd = f.h2
-            huffmanBlock(f)
-        end
+        readHuffman(f)
+        f.hl = f.h1
+        f.hd = f.h2
+        huffmanBlock(f)
     else
         #  3 is reserved.
-        f.err = CorruptInputError(f.roffset)
+        throw(CorruptInputError(f.roffset))
     end
 end
 
-function Read(f::Decompressor, b::Go.Slice{UInt8})# ::Tuple{Int, error}
+function Base.read(f::Decompressor, b::Go.Slice{UInt8})# ::Tuple{Int, error}
     while true
         if Go.len(f.toRead) > 0
             n = copy(b, f.toRead)
             f.toRead = f.toRead[n, :]
             if Go.len(f.toRead) == 0
-                return n, f.err
+                return n
             end
-            return n, nothing
-        end
-        if f.err !== nothing
-            return 0, f.err
+            return n
         end
         f.step(f)
-        if f.err !== nothing && Go.len(f.toRead) == 0
+        if Go.len(f.toRead) == 0
             #  Flush what's left in case of error
             f.toRead = readFlush(f.dict)
         end
     end
 end
 
-function Close(f::Decompressor)# ::error
-    if f.err == EOFError
-        return nothing
-    end
-    return f.err
+function Base.close(f::Decompressor)# ::error
+    return
 end
 
 #  RFC 1951 section 3.2.7.
@@ -262,20 +249,16 @@ const codeOrder = Go.Slice([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 
 
 function readHuffman(f::Decompressor)# ::error
     while f.nb < 5 + 5 + 4
-        if (err = moreBits(f); err !== nothing)
-            return err
-        end
+        moreBits(f)
     end
-
     nlit = Int(f.b & 0x1F) + 257
     if nlit > maxNumLit
-        return CorruptInputError(f.roffset)
+        throw(CorruptInputError(f.roffset))
     end
-
     f.b >>= 5
     ndist = Int(f.b & 0x1F) + 1
     if ndist > maxNumDist
-        return CorruptInputError(f.roffset)
+        throw(CorruptInputError(f.roffset))
     end
     f.b >>= 5
     nclen = Int(f.b & 0x0F) + 4
@@ -284,9 +267,7 @@ function readHuffman(f::Decompressor)# ::error
     f.nb -= 5 + 5 + 4
     for i = 0:(nclen - 1)
         while f.nb < 3
-            if (err = moreBits(f); err !== nothing)
-                return err
-            end
+            moreBits(f)
         end
         f.codebits[codeOrder[i]] = Int(f.b & 0x07)
         f.b >>= 3
@@ -296,14 +277,11 @@ function readHuffman(f::Decompressor)# ::error
         f.codebits[codeOrder[i]] = 0
     end
     if !init(f.h1, f.codebits[:])
-        return CorruptInputError(f.roffset)
+        throw(CorruptInputError(f.roffset))
     end
     i, n = 0, nlit + ndist
     while i < n
-        x, err = huffSym(f, f.h1)
-        if err !== nothing
-            return err
-        end
+        x = huffSym(f, f.h1)
         if x < 16
             #  Actual length.
             f.bits[i] = x
@@ -318,7 +296,7 @@ function readHuffman(f::Decompressor)# ::error
             rep = 3
             nb = 2
             if i == 0
-                return CorruptInputError(f.roffset)
+                throw(CorruptInputError(f.roffset))
             end
             b = f.bits[i-1]
         elseif x == 17
@@ -330,18 +308,16 @@ function readHuffman(f::Decompressor)# ::error
             nb = 7
             b = 0
         else
-            return InternalError("unexpected length code")
+            throw(InternalError("unexpected length code"))
         end
         while f.nb < nb
-            if (err = moreBits(f); err !== nothing)
-                return err
-            end
+            moreBits(f)
         end
         rep += Int(f.b & UInt32(1 << nb - 1))
         f.b >>= nb
         f.nb -= nb
         if i + rep > n
-            return CorruptInputError(f.roffset)
+            throw(CorruptInputError(f.roffset))
         end
         for j = 0:(rep - 1)
             f.bits[i] = b
@@ -350,7 +326,7 @@ function readHuffman(f::Decompressor)# ::error
     end
 
     if !init(f.h1, f.bits[0:nlit]) || !init(f.h2, f.bits[nlit:nlit+ndist])
-        return CorruptInputError(f.roffset)
+        throw(CorruptInputError(f.roffset))
     end
 
     #  As an optimization, we can initialize the min bits to read at a time
@@ -360,8 +336,7 @@ function readHuffman(f::Decompressor)# ::error
     if f.h1.min < f.bits[endBlockMarker]
         f.h1.min = f.bits[endBlockMarker]
     end
-
-    return nothing
+    return
 end
 
 #  Decode a single Huffman block from f.
@@ -381,20 +356,15 @@ function huffmanBlock(f::Decompressor)
 
 @label readLiteral
     #  Read literal and/or (length, distance) according to RFC section 3.2.3.
-    v, err = huffSym(f, f.hl)
-    if err !== nothing
-        f.err = err
-        return
-    end
+    v = huffSym(f, f.hl)
     #  number of bits extra
     local n::UInt
     local length::Int
     if v < 256
-        writeByte(f.dict, UInt8(v))
+        writeByte(f.dict, v % UInt8)
         if availWrite(f.dict) == 0
             f.toRead = readFlush(f.dict)
-            #FIXME
-            f.step = Decompressor.huffmanBlock
+            f.step = huffmanBlock
             f.stepState = stateInit
             return
         end
@@ -403,37 +373,32 @@ function huffmanBlock(f::Decompressor)
         finishBlock(f)
         return
     elseif v < 265
-        length = v - 257 - 3
+        length = v - (257 - 3)
         n = 0
     elseif v < 269
-        length = v * 2 - 265 * 2 - 11
+        length = v * 2 - (265 * 2 - 11)
         n = 1
     elseif v < 273
-        length = v * 4 - 269 * 4 - 19
+        length = v * 4 - (269 * 4 - 19)
         n = 2
     elseif v < 277
-        length = v * 8 - 273 * 8 - 35
+        length = v * 8 - (273 * 8 - 35)
         n = 3
     elseif v < 281
-        length = v * 16 - 277 * 16 - 67
+        length = v * 16 - (277 * 16 - 67)
         n = 4
     elseif v < 285
-        length = v * 32 - 281 * 32 - 131
+        length = v * 32 - (281 * 32 - 131)
         n = 5
     elseif v < maxNumLit
         length = 258
         n = 0
     else
-        f.err = CorruptInputError(f.roffset)
-        return
+        throw(CorruptInputError(f.roffset))
     end
-
     if n > 0
         while f.nb < n
-            if (err = moreBits(f); err !== nothing)
-                f.err = err
-                return
-            end
+            moreBits(f)
         end
         length += Int(f.b & UInt32(1 << n - 1))
         f.b >>= n
@@ -442,20 +407,13 @@ function huffmanBlock(f::Decompressor)
     local dist::Int
     if f.hd === nothing
         while f.nb < 5
-            if (err = moreBits(f); err !== nothing)
-                f.err = err
-                return
-            end
+            moreBits(f)
         end
         dist = Int(bitreverse(UInt8(f.b & 0x1F << 3)))
         f.b >>= 5
         f.nb -= 5
     else
-        dist, err = huffSym(f, f.hd)
-        if err !== nothing
-            f.err = err
-            return
-        end
+        dist = huffSym(f, f.hd)
     end
 
     if dist < 4
@@ -463,26 +421,21 @@ function huffmanBlock(f::Decompressor)
     elseif dist < maxNumDist
         nb = UInt(dist - 2) >> 1
         #  have 1 bit in bottom of dist, need nb more.
-        extra = dist & 1 << nb
+        extra = (dist & 1) << nb
         while f.nb < nb
-            if (err = moreBits(f); err !== nothing)
-                f.err = err
-                return
-            end
+            moreBits(f)
         end
         extra |= Int(f.b & UInt32(1 << nb - 1))
         f.b >>= nb
         f.nb -= nb
         dist = 1 << (nb + 1) + 1 + extra
     else
-        f.err = CorruptInputError(f.roffset)
-        return
+        throw(CorruptInputError(f.roffset))
     end
 
     #  No check on length; encoding can be prescient.
     if dist > histSize(f.dict)
-        f.err = CorruptInputError(f.roffset)
-        return
+        throw(CorruptInputError(f.roffset))
     end
 
     f.copyLen, f.copyDist = length, dist
@@ -499,8 +452,7 @@ function huffmanBlock(f::Decompressor)
     if availWrite(f.dict) == 0 || f.copyLen > 0
         f.toRead = readFlush(f.dict)
         #  We need to continue this work
-        # FIXME
-        f.step = Decompressor.huffmanBlock
+        f.step = huffmanBlock
         f.stepState = stateDict
         return
     end
@@ -514,27 +466,18 @@ function dataBlock(f::Decompressor)
     f.nb = 0
     f.b = 0
     #  Length then ones-complement of length.
-    # FIXME
-    nr, err = io.ReadFull(f.r, f.buf[0:4])
-    f.roffset += Int64(nr)
-    if err !== nothing
-        f.err = noEOF(err)
-        return
-    end
-
+    readbytes!(f.r, f.buf)
+    f.roffset += Int64(4)
     n = Int(f.buf[0]) | Int(f.buf[1]) << 8
     nn = Int(f.buf[2]) | Int(f.buf[3]) << 8
-    if UInt16(nn) != UInt16(~(n))
-        f.err = CorruptInputError(f.roffset)
-        return
+    if UInt16(nn) != UInt16(~n)
+        throw(CorruptInputError(f.roffset))
     end
-
     if n == 0
         f.toRead = readFlush(f.dict)
         finishBlock(f)
         return
     end
-
     f.copyLen = n
     copyData(f)
 end
@@ -547,23 +490,15 @@ function copyData(f::Decompressor)
         buf = buf[begin:f.copyLen]
     end
 
-    # FIXME
-    cnt, err = io.ReadFull(f.r, buf)
+    cnt = readbytes!(f.r, buf)
     f.roffset += Int64(cnt)
     f.copyLen -= cnt
     writeMark(f.dict, cnt)
-    if err !== nothing
-        f.err = noEOF(err)
-        return
-    end
-
     if availWrite(f.dict) == 0 || f.copyLen > 0
         f.toRead = readFlush(f.dict)
-        # FIXME
-        f.step = Decompressor.copyData
+        f.step = copyData
         return
     end
-
     finishBlock(f)
 end
 
@@ -572,29 +507,17 @@ function finishBlock(f::Decompressor)
         if availRead(f.dict) > 0
             f.toRead = readFlush(f.dict)
         end
-        f.err = io.EOF
     end
-    # FIXME
-    f.step = Decompressor.nextBlock
-end
-
-#  noEOF returns err, unless err == io.EOF, in which case it returns io.ErrUnexpectedEOF.
-function noEOF(e::Exception)# ::error
-    if e == EOFError
-        return io.ErrUnexpectedEOF
-    end
-    return e
+    f.step = nextBlock
+    return
 end
 
 function moreBits(f::Decompressor)# ::error
-    c, err = ReadByte(f.r)
-    if err !== nothing
-        return noEOF(err)
-    end
+    c = read(f.r, UInt8)
     f.roffset += 1
     f.b |= UInt32(c) << f.nb
     f.nb += 8
-    return nothing
+    return
 end
 
 #  Read the next Huffman-encoded symbol from f according to h.
@@ -610,44 +533,28 @@ function huffSym(f::Decompressor, h::HuffmanDecoder)# ::Tuple{Int, error}
     nb, b = f.nb, f.b
     while true
         while nb < n
-            c, err = ReadByte(f.r)
-            if err !== nothing
-                f.b = b
-                f.nb = nb
-                return 0, noEOF(err)
-            end
+            c = read(f.r, UInt8)
             f.roffset += 1
-            b |= UInt32(c) << nb & 31
+            b |= UInt32(c) << (nb & 31)
             nb += 8
         end
-
-        chunk = h.chunks[b&(huffmanNumChunks-1)]
+        chunk = h.chunks[b & (huffmanNumChunks-1)]
         n = UInt(chunk & huffmanCountMask)
         if n > huffmanChunkBits
-            chunk = h.links[chunk>>huffmanValueShift][(b>>huffmanChunkBits)&h.linkMask]
+            chunk = h.links[chunk >> huffmanValueShift][(b >> huffmanChunkBits) & h.linkMask]
             n = UInt(chunk & huffmanCountMask)
         end
         if n <= nb
             if n == 0
                 f.b = b
                 f.nb = nb
-                f.err = CorruptInputError(f.roffset)
-                return 0, f.err
+                throw(CorruptInputError(f.roffset))
             end
-            f.b = b >> n & 31
+            f.b = b >> (n & 31)
             f.nb = nb - n
-            return Int(chunk >> huffmanValueShift), nothing
+            return Int(chunk >> huffmanValueShift)
         end
     end
-end
-
-#FIXME
-function makeReader(r::IO)# ::Reader
-    rr, ok = (r::Reader)
-    if ok
-        return rr
-    end
-    return bufio.NewReader(r)
 end
 
 function fixedHuffmanDecoderInit()
@@ -665,22 +572,16 @@ function fixedHuffmanDecoderInit()
     for i = 280:(288 - 1)
         bits[i] = 8
     end
-    init(fixedHuffmanDecoder[], bits[:])
+    f = HuffmanDecoder()
+    init(f, bits[:])
+    fixedHuffmanDecoder[] = f
     return
 end
 
-function Reset(f::Decompressor, r::IO, dict::Go.Slice{UInt8})# ::error
-    #FIXME
-    f = Decompressor(
-        r = makeReader(r),
-        bits = f.bits,
-        codebits = f.codebits,
-        dict = f.dict,
-        step = Decompressor.nextBlock,
-    )
-
+function Base.reset(f::Decompressor, r::IO, dict::Go.Slice{UInt8})# ::error
+    f = Decompressor(r, f.bits, f.codebits, f.dict, nextBlock)
     init(f.dict, maxMatchOffset, dict)
-    return nothing
+    return
 end
 
 #  NewReader returns a new ReadCloser that can be used
@@ -692,16 +593,16 @@ end
 # 
 #  The ReadCloser returned by NewReader also implements Resetter.
 function NewReader(r::IO)# ::io.ReadCloser
-    fixedHuffmanDecoderInit()
-    local f::Decompressor
-
-    f.r = makeReader(r)
-    f.bits = new(Go.Slice{Int})
-    f.codebits = new(Go.Slice{Int})
-    f.step = Decompressor.nextBlock
-    f.dict.init(maxMatchOffset, nothing)
+    f = Decompressor(
+        r, Go.Array(Int, maxNumLit + maxNumDist),
+        Go.Array(Int, numCodes),
+        DictDecoder(),
+        nextBlock,
+    )
+    init(f.dict, maxMatchOffset, Go.Slice(UInt8, 0))
     return f
 end
+
 #  NewReaderDict is like NewReader but initializes the reader
 #  with a preset dictionary. The returned Reader behaves as if
 #  the uncompressed data stream started with the given dictionary,
@@ -710,14 +611,13 @@ end
 # 
 #  The ReadCloser returned by NewReader also implements Resetter.
 function NewReaderDict(r::IO, dict::Go.Slice{UInt8})# ::io.ReadCloser
-    fixedHuffmanDecoderInit()
-    local f::Decompressor
-
-    f.r = makeReader(r)
-    f.bits = new(Go.Slice{Int})
-    f.codebits = new(Go.Slice{Int})
-    f.step = Decompressor.nextBlock
-    f.dict.init(maxMatchOffset, dict)
+    f = Decompressor(
+        r, Go.Array(Int, maxNumLit + maxNumDist),
+        Go.Array(Int, numCodes),
+        DictDecoder(),
+        nextBlock,
+    )
+    init(f.dict, maxMatchOffset, dict)
     return f
 end
 

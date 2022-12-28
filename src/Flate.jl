@@ -2,6 +2,7 @@ module Flate
 
 include("gotypes.jl")
 import .GoTypes: Go
+import Base: ==
 
 include("consts.jl")
 include("token.jl")
@@ -21,6 +22,8 @@ function __init__()
     offsetFreq[0] = 1
     huffOffset[] = newHuffmanEncoder(offsetCodeCount)
     generate(huffOffset[], offsetFreq, 15)
+    fixedHuffmanDecoderInit()
+    return
 end
 
 end

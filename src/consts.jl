@@ -146,12 +146,12 @@ const tableShift = 32 - tableBits
 #  buffer to not risk overflowing the int32.
 const bufferReset = typemax(Int32) - maxStoreBlockSize * 2
 
-function load32(b::Go.Slice{UInt8}, i::Int32)# ::UInt32
+function load32(b::Go.Slice{UInt8}, i::Integer)# ::UInt32
     #  Help the compiler eliminate bounds checks on the next line.
     return UInt32(b[i+1]) | UInt32(b[i+2]) << 8 | UInt32(b[i+3]) << 16 | UInt32(b[i+4]) << 24
 end
 
-function load64(b::Go.Slice{UInt8}, i::Int32)# ::UInt64
+function load64(b::Go.Slice{UInt8}, i::Integer)# ::UInt64
     #  Help the compiler eliminate bounds checks on the next line.
     return UInt64(b[i + 1]) |
            UInt64(b[i + 2]) << 8 |

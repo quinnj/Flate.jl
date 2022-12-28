@@ -12,9 +12,15 @@ mutable struct DeflateFast
     cur::Int32
 end
 
+DeflateFast(prev::Go.Slice{UInt8}) = DeflateFast(
+    Go.Array([TableEntry() for _ = 1:tableSize]),
+    prev,
+    Int32(0),
+)
+
 function newDeflateFast()# ::DeflateFast
     return DeflateFast(
-        Go.Array(TableEntry, tableSize),
+        Go.Array([TableEntry() for _ = 1:tableSize]),
         Go.Slice(UInt8, 0, maxStoreBlockSize),
         maxStoreBlockSize,
     )
@@ -74,9 +80,9 @@ function encode(e::DeflateFast, dst::Go.Slice{Token}, src::Go.Slice{UInt8})# ::G
                 @goto emitRemainder
             end
 
-            candidate = e.table[(nextHash & tableMask)]
+            candidate = e.table[nextHash & tableMask]
             now = load32(src, nextS)
-            e.table[(nextHash & tableMask)] = TableEntry(cv, s + e.cur)
+            e.table[nextHash & tableMask] = TableEntry(cv, s + e.cur)
             nextHash = hash(now)
 
             offset = s - (candidate.offset - e.cur)
@@ -128,16 +134,16 @@ function encode(e::DeflateFast, dst::Go.Slice{Token}, src::Go.Slice{UInt8})# ::G
             #  are faster as one load64 call (with some shifts) instead of
             #  three load32 calls.
             x = load64(src, s - 1)
-            prevHash = hash(UInt32(x))
-            e.table[(prevHash & tableMask)] =
-                TableEntry(UInt32(x), e.cur + s - 1)
+            prevHash = hash(x % UInt32)
+            e.table[prevHash & tableMask] =
+                TableEntry((x % UInt32), e.cur + s - 1)
             x >>= 8
-            currHash = hash(UInt32(x))
-            candidate = e.table[(currHash & tableMask)]
-            e.table[(currHash & tableMask)] = TableEntry(UInt32(x), e.cur + s)
+            currHash = hash((x % UInt32))
+            candidate = e.table[currHash & tableMask]
+            e.table[currHash & tableMask] = TableEntry((x % UInt32), e.cur + s)
 
-            offset = s - candidate.offset - e.cur
-            if offset > maxMatchOffset || UInt32(x) != candidate.val
+            offset = s - (candidate.offset - e.cur)
+            if offset > maxMatchOffset || (x % UInt32) != candidate.val
                 cv = UInt32(x >> 8)
                 nextHash = hash(cv)
                 s += 1
@@ -158,7 +164,7 @@ end
 
 function emitLiteral(dst::Go.Slice{Token}, lit::Go.Slice{UInt8})# ::Vector{Token}
     for v in lit
-        dst = append(dst, literalToken(UInt32(v)))
+        dst = Go.append(dst, literalToken(UInt32(v)))
     end
     return dst
 end
@@ -166,7 +172,7 @@ end
 #  matchLen returns the match Go.len between src[s:] and src[t:].
 #  t can be negative to indicate the match is starting in e.prev.
 #  We assume that src[s-4:s] and src[t-4:t] already match.
-function matchLen(e::DeflateFast, s::Int32, t::Int32)# ::Int32
+function matchLen(e::DeflateFast, s::Integer, t::Integer, src::Go.Slice{UInt8})# ::Int32
     s1 = Int(s) + maxMatchLength - 4
     if s1 > Go.len(src)
         s1 = Go.len(src)
@@ -197,7 +203,7 @@ function matchLen(e::DeflateFast, s::Int32, t::Int32)# ::Int32
         b = b[begin:Go.len(a)]
     end
     a = a[begin:Go.len(b)]
-    for i in 0:(Go.len(b)-1)
+    for i in eachindex(b)
         if a[i] != b[i]
             return Int32(i)
         end
@@ -208,7 +214,6 @@ function matchLen(e::DeflateFast, s::Int32, t::Int32)# ::Int32
     if Int(s + n) == s1
         return n
     end
-
     #  Continue looking for more matches in the current block.
     a = src[s+n:s1]
     b = src[begin:Go.len(a)]
@@ -222,7 +227,7 @@ end
 
 #  Reset resets the encoding history.
 #  This ensures that no matches are made to the previous block.
-function reset(e::DeflateFast)
+function Base.reset(e::DeflateFast)
     e.prev = e.prev[begin:0]
     #  Bump the offset, so all matches will fail distance check.
     #  Nothing should be >= e.cur in the table.
@@ -240,14 +245,13 @@ end
 #  See https://golang.org/issue/18636 and https://github.com/golang/go/issues/34121.
 function shiftOffsets(e::DeflateFast)
     if Go.len(e.prev) == 0
-        for i in eachindex(e.table[:])
+        for i in eachindex(e.table)
             e.table[i] = TableEntry()
         end
         e.cur = maxMatchOffset + 1
         return
     end
-
-    for i in eachindex(e.table[:])
+    for i in eachindex(e.table)
         v = e.table[i].offset - e.cur + maxMatchOffset + 1
         if v < 0
             #  We want to reset e.cur to maxMatchOffset + 1, so we need to shift
@@ -256,10 +260,8 @@ function shiftOffsets(e::DeflateFast)
             #  any negative offsets at 0.
             v = 0
         end
-
         e.table[i].offset = v
     end
-    
     e.cur = maxMatchOffset + 1
     return
 end

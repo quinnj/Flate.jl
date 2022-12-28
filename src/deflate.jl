@@ -7,7 +7,7 @@ mutable struct CompressionLevel
     fastSkipHashing::Int
 end
 
-levels = CompressionLevel[
+const levels = Go.Array(CompressionLevel[
     # NoCompression.
     CompressionLevel(0, 0, 0, 0, 0, 0),
     # BestSpeed uses a custom algorithm; see deflatefast.go.
@@ -23,7 +23,7 @@ levels = CompressionLevel[
     CompressionLevel(7, 8, 32, 128, 256, skipNever),
     CompressionLevel(8, 32, 128, 258, 1024, skipNever),
     CompressionLevel(9, 32, 258, 258, 4096, skipNever),
-]
+])
 
 mutable struct Compressor
     compressionLevel::CompressionLevel
@@ -59,10 +59,47 @@ mutable struct Compressor
     length::Int
     offset::Int
     maxInsertIndex::Int
-    err::Exception
 
     hashMatch::Go.Array{UInt32} # maxMatchLength - 1 length
+
+    function Compressor()
+        x = new()
+        x.compressionLevel = levels[0]
+        x.sync = x.bool = false
+        x.chainHead = 0
+        x.hashHead = Go.Array(UInt32, hashSize)
+        x.hashPrev = Go.Array(UInt32, windowSize)
+        x.hashOffset = 0
+        x.index = 0
+        x.window = Go.Slice(UInt8, 0)
+        x.windowEnd = 0
+        x.blockStart = 0
+        x.byteAvailable = false
+        x.tokens = Go.Slice(Token, 0)
+        x.length = 0
+        x.offset = 0
+        x.maxInsertIndex = 0
+        x.hashMatch = Go.Array(UInt32, maxMatchLength - 1)
+        return x
+    end
 end
+
+==(a::Compressor, b::Compressor) = a.compressionLevel == b.compressionLevel &&
+    a.sync == b.sync && a.bool == b.bool &&
+    a.chainHead == b.chainHead &&
+    a.hashHead == b.hashHead &&
+    a.hashPrev == b.hashPrev &&
+    a.hashOffset == b.hashOffset &&
+    a.index == b.index &&
+    a.window == b.window &&
+    a.windowEnd == b.windowEnd &&
+    a.blockStart == b.blockStart &&
+    a.byteAvailable == b.byteAvailable &&
+    a.tokens == b.tokens &&
+    a.length == b.length &&
+    a.offset == b.offset &&
+    a.maxInsertIndex == b.maxInsertIndex &&
+    a.hashMatch == b.hashMatch
 
 function fillDeflate(d::Compressor, b::Go.Slice{UInt8})# ::Int
     if d.index >= 2 * windowSize - (minMatchLength + maxMatchLength)
@@ -110,10 +147,11 @@ function writeBlock(d::Compressor, tokens::Go.Slice{Token}, index::Int)# ::error
         local window::Go.Slice{UInt8}
         if d.blockStart <= index
             window = d.window[d.blockStart:index]
+        else
+            window = Go.Slice(UInt8, 0)
         end
         d.blockStart = index
         writeBlock(d.w, tokens, false, window)
-        return d.w.err
     end
     return
 end
@@ -157,12 +195,12 @@ function fillWindow(d::Compressor, b::Go.Slice{UInt8})
         d.bulkHasher(toCheck, dst)
         for (i, val) in Go.each(dst)
             di = i + index
-            hh = d.hashHead[(val & hashMask)]
+            hh = d.hashHead[val & hashMask]
             # Get previous value with the same hash.
             # Our chain should point to the previous value.
-            d.hashPrev[(di & windowMask)] = hh
+            d.hashPrev[di & windowMask] = hh
             # Set the head of the hash chain to us.
-            hh = UInt32(di + d.hashOffset)
+            d.hashHead[val & hashMask] = UInt32(di + d.hashOffset)
         end
     end
     # Update window information.
@@ -182,14 +220,14 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
     win = d.window[0:pos+minMatchLook]
     # We quit when we get a match that's at least nice long
     nice = Go.len(win) - pos
-    if d.nice < nice
-        nice = d.nice
+    if d.compressionLevel.nice < nice
+        nice = d.compressionLevel.nice
     end
 
     # If we've got a match that's good enough, only look in 1/4 the chain.
-    tries = d.chain
+    tries = d.compressionLevel.chain
     length = prevLength
-    if length >= d.good
+    if length >= d.compressionLevel.good
         tries >>= 2
     end
 
@@ -201,7 +239,7 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
     while tries > 0
         if wEnd == win[i+length]
             n = matchLen(win[i, :], wPos, minMatchLook)
-            if n > length && n > minMatchLength || pos - i <= 4096
+            if n > length && (n > minMatchLength || pos - i <= 4096)
                 length = n
                 offset = pos - i
                 ok = true
@@ -226,11 +264,9 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
 end
 
 function writeStoredBlock(d::Compressor, buf::Go.Slice{UInt8})# ::error
-    if (writeStoredHeader(d.w, Go.len(buf), false); d.w.err !== nothing)
-        return d.w.err
-    end
+    writeStoredHeader(d.w, Go.len(buf), false)
     writeBytes(d.w, buf)
-    return d.w.err
+    return
 end
 
 const hashmul = 0x1e35a7bd
@@ -252,9 +288,9 @@ function bulkHash4(b::Go.Slice{UInt8}, dst::Go.Slice{UInt32})
         return
     end
     hb = UInt32(b[3]) | UInt32(b[2]) << 8 | UInt32(b[1]) << 16 | UInt32(b[0]) << 24
-    dst[1] = (hb * hashmul) >> (32 - hashBits)
+    dst[0] = (hb * hashmul) >> (32 - hashBits)
     _end = Go.len(b) - minMatchLength + 1
-    for i = 1:_end
+    for i = 1:(_end - 1)
         hb = hb << 8 | UInt32(b[i+3])
         dst[i] = (hb * hashmul) >> (32 - hashBits)
     end
@@ -263,7 +299,7 @@ end
 # matchLen returns the number of matching bytes in a and b
 # up to Go.len 'max'. Both slices must be at least 'max'
 # bytes in size.
-function matchLen(a::Go.Slice{UInt8}, b::Go.Slice{UInt8})# ::Int
+function matchLen(a::Go.Slice{UInt8}, b::Go.Slice{UInt8}, max::Int)# ::Int
     a = a[begin:max]
     b = b[begin:Go.len(a)]
     for (i, av) in Go.each(a)
@@ -288,10 +324,9 @@ function encSpeed(d::Compressor)
             if d.windowEnd == 0
                 return
             elseif d.windowEnd <= 16
-                d.err = writeStoredBlock(d, d.window[begin:d.windowEnd])
+                writeStoredBlock(d, d.window[begin:d.windowEnd])
             else
                 writeBlockHuff(d.w, false, d.window[begin:d.windowEnd])
-                d.err = d.w.err
             end
             d.windowEnd = 0
             reset(d.bestSpeed)
@@ -307,7 +342,6 @@ function encSpeed(d::Compressor)
     else
         writeBlockDynamic(d.w, d.tokens, false, d.window[begin:d.windowEnd])
     end
-    d.err = d.w.err
     d.windowEnd = 0
     return
 end
@@ -315,7 +349,7 @@ end
 function initDeflate(d::Compressor)
     d.window = Go.Slice(UInt8, 2 * windowSize)
     d.hashOffset = 1
-    d.tokens = Go.Slice(Token, maxFlateBlockTokens + 1)
+    d.tokens = Go.Slice(Token, 0, maxFlateBlockTokens + 1)
     d.length = minMatchLength - 1
     d.offset = 0
     d.byteAvailable = false
@@ -330,7 +364,7 @@ function deflate(d::Compressor)
         return
     end
 
-    d.maxInsertIndex = d.windowEnd - minMatchLength - 1
+    d.maxInsertIndex = d.windowEnd - (minMatchLength - 1)
 
     while true
         if d.index > d.windowEnd
@@ -339,7 +373,7 @@ function deflate(d::Compressor)
         lookahead = d.windowEnd - d.index
         if lookahead < minMatchLength + maxMatchLength
             if !d.sync
-                return # break Loop
+                break
             end
             if d.index > d.windowEnd
                 error("index > windowEnd")
@@ -352,9 +386,7 @@ function deflate(d::Compressor)
                     d.byteAvailable = false
                 end
                 if Go.len(d.tokens) > 0
-                    if (d.err = writeBlock(d, d.tokens, d.index); d.err !== nothing)
-                        return
-                    end
+                    writeBlock(d, d.tokens, d.index)
                     d.tokens = d.tokens[begin:0]
                 end
                 break
@@ -364,10 +396,10 @@ function deflate(d::Compressor)
         if d.index < d.maxInsertIndex
             # Update the hash
             hash = hash4(d.window[d.index:d.index + minMatchLength])
-            hh = d.hashHead[(hash & hashMask)]
+            hh = d.hashHead[hash & hashMask]
             d.chainHead = Int(hh)
-            d.hashPrev[(d.index & windowMask)] = UInt32(d.chainHead)
-            hh = UInt32(d.index + d.hashOffset)
+            d.hashPrev[d.index & windowMask] = UInt32(d.chainHead)
+            d.hashHead[hash & hashMask] = UInt32(d.index + d.hashOffset)
         end
 
         prevLength = d.length
@@ -379,9 +411,9 @@ function deflate(d::Compressor)
             minIndex = 0
         end
         if d.chainHead - d.hashOffset >= minIndex &&
-           (d.fastSkipHashing != skipNever &&
+           (d.compressionLevel.fastSkipHashing != skipNever &&
            lookahead > minMatchLength - 1 ||
-           d.fastSkipHashing == skipNever && lookahead > prevLength && prevLength < d.lazy)
+           d.compressionLevel.fastSkipHashing == skipNever && lookahead > prevLength && prevLength < d.compressionLevel.lazy)
            newLength, newOffset, ok = findMatch(d,
                 d.index,
                 d.chainHead - d.hashOffset,
@@ -394,13 +426,13 @@ function deflate(d::Compressor)
             end
         end
 
-        if d.fastSkipHashing != skipNever && d.length >= minMatchLength ||
-           d.fastSkipHashing == skipNever &&
+        if d.compressionLevel.fastSkipHashing != skipNever && d.length >= minMatchLength ||
+           d.compressionLevel.fastSkipHashing == skipNever &&
            prevLength >= minMatchLength &&
            d.length <= prevLength
             # There was a match at the previous step, and the current match is
             # not better. Output the previous match.
-            if d.fastSkipHashing != skipNever
+            if d.compressionLevel.fastSkipHashing != skipNever
                 d.tokens = Go.append(d.tokens,
                     matchToken(
                         UInt32(d.length - baseMatchLength),
@@ -420,9 +452,9 @@ function deflate(d::Compressor)
             # index and index-1 are already inserted. If there is not enough
             # lookahead, the last two strings are not inserted into the hash
             # table.
-            if d.length <= d.fastSkipHashing
+            if d.length <= d.compressionLevel.fastSkipHashing
                 local newIndex::Int
-                if d.fastSkipHashing != skipNever
+                if d.compressionLevel.fastSkipHashing != skipNever
                     newIndex = d.index + d.length
                 else
                     newIndex = d.index + prevLength - 1
@@ -434,15 +466,15 @@ function deflate(d::Compressor)
                         hash = hash4(d.window[index:index+minMatchLength])
                         # Get previous value with the same hash.
                         # Our chain should point to the previous value.
-                        hh = d.hashHead[(hash & hashMask)]
-                        d.hashPrev[(index & windowMask)] = hh
+                        hh = d.hashHead[hash & hashMask]
+                        d.hashPrev[index & windowMask] = hh
                         # Set the head of the hash chain to us.
-                        hh = UInt32(index + d.hashOffset)
+                        d.hashHead[hash & hashMask] = UInt32(index + d.hashOffset)
                     end
                     index += 1
                 end
                 d.index = index
-                if d.fastSkipHashing == skipNever
+                if d.compressionLevel.fastSkipHashing == skipNever
                     d.byteAvailable = false
                     d.length = minMatchLength - 1
                 end
@@ -453,27 +485,23 @@ function deflate(d::Compressor)
             end
             if Go.len(d.tokens) == maxFlateBlockTokens
                 # The block includes the current character
-                if (d.err = writeBlockd(d, d.tokens, d.index); d.err !== nothing)
-                    return
-                end
+                writeBlockd(d, d.tokens, d.index)
                 d.tokens = d.tokens[begin:0]
             end
         else
-            if d.fastSkipHashing != skipNever || d.byteAvailable
+            if d.compressionLevel.fastSkipHashing != skipNever || d.byteAvailable
                 i = d.index - 1
-                if d.fastSkipHashing != skipNever
+                if d.compressionLevel.fastSkipHashing != skipNever
                     i = d.index
                 end
                 d.tokens = Go.append(d.tokens, literalToken(UInt32(d.window[i])))
                 if Go.len(d.tokens) == maxFlateBlockTokens
-                    if (d.err = writeBlock(d, d.tokens, i + 1); d.err !== nothing)
-                        return
-                    end
+                    writeBlock(d, d.tokens, i + 1)
                     d.tokens = d.tokens[begin:0]
                 end
             end
             d.index += 1
-            if d.fastSkipHashing == skipNever
+            if d.compressionLevel.fastSkipHashing == skipNever
                 d.byteAvailable = true
             end
         end
@@ -487,8 +515,8 @@ function fillStore(d::Compressor, b::Go.Slice{UInt8})# ::Int
 end
 
 function store(d::Compressor)
-    if d.windowEnd > 0 && d.windowEnd == maxStoreBlockSize || d.sync
-        d.err = writeStoredBlock(d, d.window[begin:d.windowEnd])
+    if d.windowEnd > 0 && (d.windowEnd == maxStoreBlockSize || d.sync)
+        writeStoredBlock(d, d.window[begin:d.windowEnd])
         d.windowEnd = 0
     end
 end
@@ -501,56 +529,43 @@ function storeHuff(d::Compressor)
         return
     end
     writeBlockHuff(d.w, false, d.window[begin:d.windowEnd])
-    d.err = d.w.err
     d.windowEnd = 0
     return
 end
 
 function Base.write(d::Compressor, b::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
-    if d.err !== nothing
-        return 0, d.err
-    end
     n = Go.len(b)
     while Go.len(b) > 0
         d.step(d)
         b = b[d.fill(d, b), :]
-        if d.err !== nothing
-            return 0, d.err
-        end
     end
-    return n, nothing
+    return n
 end
 
 function syncFlush(d::Compressor)# ::error
-    if d.err !== nothing
-        return d.err
-    end
     d.sync = true
     d.step(d)
-    if d.err === nothing
-        writeStoredHeader(d.w, 0, false)
-        flush(d.w)
-        d.err = d.w.err
-    end
+    writeStoredHeader(d.w, 0, false)
+    flush(d.w)
     d.sync = false
-    return d.err
+    return
 end
 
 function init(d::Compressor, w::IO, level::Int)# ::Tuple{err::error}
     d.w = newHuffmanBitWriter(w)
     if level == NoCompression
         d.window = Go.Slice(UInt8, maxStoreBlockSize)
-        d.fill = Compressor.fillStore
-        d.step = Compressor.store
+        d.fill = fillStore
+        d.step = store
     elseif level == HuffmanOnly
         d.window = Go.Slice(UInt8, maxStoreBlockSize)
-        d.fill = Compressor.fillStore
-        d.step = Compressor.storeHuff
+        d.fill = fillStore
+        d.step = storeHuff
     elseif level == BestSpeed
         d.compressionLevel = levels[level]
         d.window = Go.Slice(UInt8, maxStoreBlockSize)
-        d.fill = Compressor.fillStore
-        d.step = Compressor.encSpeed
+        d.fill = fillStore
+        d.step = encSpeed
         d.bestSpeed = newDeflateFast()
         d.tokens = Go.Slice(Token, maxStoreBlockSize)
     elseif level == DefaultCompression
@@ -559,19 +574,18 @@ function init(d::Compressor, w::IO, level::Int)# ::Tuple{err::error}
     elseif 2 <= level && level <= 9
 @label fallthrough
         d.compressionLevel = levels[level]
-        d.initDeflate()
-        d.fill = Compressor.fillDeflate
-        d.step = Compressor.deflate
+        initDeflate(d)
+        d.fill = fillDeflate
+        d.step = deflate
     else
         error("flate: invalid compression level $level: want value in range [-2, 9]")
     end
     return
 end
 
-function reset(d::Compressor, w::IO)
+function Base.reset(d::Compressor, w::IO)
     reset(d.w, w)
     d.sync = false
-    d.err = nothing
     if d.compressionLevel.level == NoCompression
         d.windowEnd = 0
     elseif d.compressionLevel.level == BestSpeed
@@ -596,27 +610,12 @@ function reset(d::Compressor, w::IO)
     end
 end
 
-function close(d::Compressor)# ::error
-    if d.err == errWriterClosed
-        return nothing
-    end
-    if d.err !== nothing
-        return d.err
-    end
+function Base.close(d::Compressor)# ::error
     d.sync = true
     d.step(d)
-    if d.err !== nothing
-        return d.err
-    end
-    if (writeStoredHeader(d.w, 0, true); d.w.err !== nothing)
-        return d.w.err
-    end
+    writeStoredHeader(d.w, 0, true)
     flush(d.w)
-    if d.w.err !== nothing
-        return d.w.err
-    end
-    d.err = errWriterClosed
-    return nothing
+    return
 end
 
 # NewWriter returns a new Writer compressing data at the given level.
@@ -632,11 +631,9 @@ end
 # If level is in the range [-2, 9] then the error returned will be nil.
 # Otherwise the error returned will be non-nil.
 function NewWriter(w::IO, level::Int)# ::Tuple{Writer, error}
-    local dw::Writer #TODO: FIXME
-    if (err = init(dw.d, w, level); err !== nothing)
-        return nothing, err
-    end
-    return dw, nothing
+    dw = Writer()
+    init(dw.d, w, level)
+    return dw
 end
 
 # NewWriterDict is like NewWriter but initializes the new
@@ -646,22 +643,19 @@ end
 # can only be decompressed by a Reader initialized with the
 # same dictionary.
 function NewWriterDict(w::IO, level::Int, dict::Go.Slice{UInt8})# ::Tuple{Writer, error}
-    dw = dictWriter(w)
-    zw, err = NewWriter(dw, level)
-    if err !== nothing
-        return nothing, err
-    end
+    dw = DictWriter(w)
+    zw = NewWriter(dw, level)
     fillWindow(zw.d, dict)
     # duplicate dictionary for Reset method.
-    zw.dict = append(zw.dict, dict...)
-    return zw, err
+    zw.dict = Go.append(zw.dict, dict...)
+    return zw
 end
 
-mutable struct dictWriter
+mutable struct DictWriter <: IO
     w::IO
 end
 
-function Base.write(w::dictWriter, b::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
+function Base.write(w::DictWriter, b::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
     return write(w.w, b)
 end
 
@@ -671,10 +665,14 @@ end
 
 # Write writes data to w, which will eventually write the
 # compressed form of data to its underlying writer.
-mutable struct Writer
+mutable struct Writer <: IO
     d::Compressor
     dict::Go.Slice{UInt8}
 end
+
+Writer() = Writer(Compressor(), Go.Slice(UInt8, 0))
+
+==(a::Writer, b::Writer) = a.d == b.d && a.dict == b.dict
 
 function Base.write(w::Writer, data::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
     return write(w.d, data)
@@ -689,22 +687,23 @@ end
 # If the underlying writer returns an error, Flush returns that error.
 # 
 # In the terminology of the zlib library, Flush is equivalent to Z_SYNC_FLUSH.
-function flush(w::Writer)# ::error
+function Base.flush(w::Writer)# ::error
     # For more about flushing:
     # https://www.bolet.org/~pornin/deflate-flush.html
     return syncFlush(w.d)
 end
 
 # Close flushes and closes the writer.
-function close(w::Writer)# ::error
+function Base.close(w::Writer)# ::error
     return close(w.d)
 end
 
 # Reset discards the writer's state and makes it equivalent to
 # the result of NewWriter or NewWriterDict called with dst
 # and w's level and dictionary.
-function reset(w::Writer, dst::IO)
-    if w.d.w.writer isa dictWriter
+function Base.reset(w::Writer, dst::IO)
+    dw = w.d.w.writer
+    if dw isa DictWriter
         # w was created with NewWriterDict
         dw.w = dst
         reset(w.d, dw)

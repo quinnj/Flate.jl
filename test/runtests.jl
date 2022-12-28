@@ -1,4 +1,9 @@
-using Test, Example
+using Test, Flate, Flate.GoTypes
 
-@test hello("Julia") == "Hello, Julia"
-@test domath(2.0) ≈ 7.0
+@testset "Flate" begin
+
+include("gotypes.jl")
+include("dict_decoder_test.jl")
+include("huffman_bit_writer_test.jl")
+
+end

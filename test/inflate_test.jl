@@ -1,33 +1,26 @@
-#  Copyright 2014 The Go Authors. All rights reserved.
-#  Use of this source code is governed by a BSD-style
-#  license that can be found in the LICENSE file.
-module flate
+using Flate, Test, Flate.GoTypes
 
-function TestReset(t::testing.T)
-    ss = Vector{String}["lorem ipsum izzle fo rizzle", "the quick brown fox jumped over"]
-
-    deflated = make(Vector{bytes.Buffer}, 2)
-    for (i, s) in ss
-        w, _ = NewWriter(deflated[i], 1)
-        w.Write(convert(Vector{UInt8}, s))
-        w.Close()
+@testset "TestReset" begin
+    ss = Go.Slice(["lorem ipsum izzle fo rizzle", "the quick brown fox jumped over"])
+    deflated = Go.Slice([IOBuffer(), IOBuffer()])
+    for (i, s) in Go.each(ss)
+        w = Flate.NewWriter(deflated[i], 1)
+        write(w, Go.Slice(s))
+        close(w)
     end
 
-    inflated = make(Vector{bytes.Buffer}, 2)
-    f = NewReader(deflated[0])
-    io.Copy(inflated[0], f)
-    (f::Resetter).Reset(deflated[1], nothing)
-    io.Copy(inflated[1], f)
-    f.Close()
-    for (i, s) in ss
-        if s != inflated[i].String()
-            t.Errorf("inflated[%d]:\\ngot  %q\\nwant %q", i, inflated[i], s)
-        end
-
+    inflated = Go.Slice([IOBuffer(), IOBuffer()])
+    f = Flate.NewReader(deflated[0])
+    copy(inflated[0], f)
+    reset(deflated[1], nothing)
+    copy(inflated[1], f)
+    close(f)
+    for (i, s) in Go.each(ss)
+        @test s == String(take!(inflated[i]))
     end
-
 end
-function TestReaderTruncated(t::testing.T)
+
+@testset "TestReaderTruncated" begin
     vectors = Vector{NamedTuple{(input, output),Tuple{String,String}}}[
         ["\\x00", ""],
         ["\\x00\\f", ""],
@@ -52,11 +45,10 @@ function TestReaderTruncated(t::testing.T)
         if String(b) != v.output
             t.Errorf("test %d, output mismatch: got %q, want %q", i, b, v.output)
         end
-
     end
-
 end
-function TestResetDict(t::testing.T)
+
+@testset "TestResetDict" begin
     dict = convert(Vector{UInt8}, "the lorem fox")
     ss = Vector{String}["lorem ipsum izzle fo rizzle", "the quick brown fox jumped over"]
 
@@ -79,8 +71,5 @@ function TestResetDict(t::testing.T)
         if s != inflated[i].String()
             t.Errorf("inflated[%d]:\\ngot  %q\\nwant %q", i, inflated[i], s)
         end
-
     end
-
 end
-end # module
