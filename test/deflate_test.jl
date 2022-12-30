@@ -255,7 +255,7 @@ deflateInflateStringTests = DeflateInflateStringTest[
 @testset "TestDeflateInflateString" begin
     for test in deflateInflateStringTests
         path = joinpath(dirname(pathof(Flate)), "../test", test.filename)
-        gold = Go.Slice(read(path))
+        gold = Go.Slice(replace(read(path, String), "\r\n" => "\n"))
         testToFromWithLimit(gold, test.label, test.limit)
     end
 end

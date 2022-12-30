@@ -311,5 +311,5 @@ function reverseBits(number::UInt16, bitLength::UInt8)# ::UInt16
     return bitreverse(number << (16 - bitLength))
 end
 
-const fixedLiteralEncoding::HuffmanEncoder = generateFixedLiteralEncoding()
-const fixedOffsetEncoding::HuffmanEncoder = generateFixedOffsetEncoding()
+const fixedLiteralEncoding = generateFixedLiteralEncoding()
+const fixedOffsetEncoding = generateFixedOffsetEncoding()
