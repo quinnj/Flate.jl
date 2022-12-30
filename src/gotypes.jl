@@ -73,6 +73,7 @@ end
 Array(x::T...) where {T} = Array(T, x...)
 Array(::Type{T}, x...) where {T} = Array([convert(T, v) for v in x])
 
+Base.copy(x::Array) = x.data
 len(x::Array) = length(x.data)
 Base.isassigned(v::Array, i::Integer) = isassigned(v.data, i + 1)
 
@@ -109,6 +110,10 @@ Slice(x::T...) where {T} = Slice(Array(x...))
 Slice(::Type{T}, len::Integer) where {T} = Slice(Array(T, len))
 Slice(::Type{T}, len::Integer, cap::Integer) where {T} = Slice(Array(T, cap), 0, len)
 
+Base.similar(a::Slice, ::Type{T}) where {T} = Slice(T, len(a))
+Base.similar(::Slice, ::Type{T}, dims::Tuple{ZeroTo}) where {T} = Slice(T, length(dims[1]))
+
+Base.copy(x::Slice) = @view x.data[x.i + 1:x.j]
 len(v::Base.Vector) = length(v)
 len(v::String) = sizeof(v)
 len(v::Slice) = v.j - v.i

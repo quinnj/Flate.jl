@@ -144,7 +144,7 @@ function encode(e::DeflateFast, dst::Go.Slice{Token}, src::Go.Slice{UInt8})# ::G
 
             offset = s - (candidate.offset - e.cur)
             if offset > maxMatchOffset || (x % UInt32) != candidate.val
-                cv = UInt32(x >> 8)
+                cv = (x >> 8) % UInt32
                 nextHash = hash(cv)
                 s += 1
                 break

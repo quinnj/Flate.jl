@@ -151,227 +151,81 @@ end
 #     end
 # end
 
-mutable struct syncBuffer
-    buf::IOBuffer
-    mu::ReentrantLock
-    closed::Bool
-    ready::Channel{Bool}
-end
-
-function newSyncBuffer()# ::syncBuffer
-    return syncBuffer(IOBuffer(), ReentrantLock(), false, Channel{Bool}(1))
-end
-
-function Read(b::syncBuffer, p::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
-    while true
-        b.mu.RLock()
-        n, err = b.buf.Read(p)
-        b.mu.RUnlock()
-        if n > 0 || b.closed
-            return
-        end
-        take!(b.ready)
-    end
-end
-
-function signal(b::syncBuffer)
-    put!(b.ready, true)
-end
-
-function Write(b::syncBuffer, p::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
-    write(b.buf, p)
-    signal(b)
-    return
-end
-
-function WriteMode(b::syncBuffer)
-    lock(b.mu)
-end
-
-function ReadMode(b::syncBuffer)
-    unlock(b.mu)
-    signal(b)
-end
-
-function Close(b::syncBuffer)# ::error
-    b.closed = true
-    signal(b)
-    return
-end
-
 # function testSync(level::Int, input::Go.Slice{UInt8}, name::String)
 #     if length(input) == 0
 #         return
 #     end
 #     @info("--testSync $level, $(length(input)), $name")
-#     buf = newSyncBuffer()
+#     buf = IOBuffer()
 #     buf1 = IOBuffer()
-#     WriteMode(buf)
-#     w = Flate.NewWriter(io.MultiWriter(buf, buf1), level)
-#     r = NewReader(buf)
-#     i = 0
-#     while i < 2
+#     w = Flate.NewWriter(buf, level)
+#     w1 = Flate.NewWriter(buf1, level)
+#     r = Flate.NewReader(buf)
+#     for i = 0:1
 #         local lo::Int, hi::Int
 #         if i == 0
-#             lo, hi = 0, length(input) + 1 / 2
+#             lo, hi = 0, div(length(input) + 1, 2)
 #         else
-#             lo, hi = length(input) + 1 / 2, length(input)
+#             lo, hi = div(length(input) + 1, 2), length(input)
 #         end
-#         t.Logf("#%d: write %d-%d", i, lo, hi)
-#         if (_, err = write(w, input[lo:hi]); err !== nothing)
-#             t.Errorf("testSync: write: %v", err)
-#             return
-#         end
+#         write(w, input[lo:hi])
+#         write(w1, input[lo:hi])
 #         if i == 0
-#             if (err = flush(w); err !== nothing)
-#                 t.Errorf("testSync: flush: %v", err)
-#                 return
-#             end
+#             flush(w)
+#             flush(w1)
 #         else
-#             if (err = close(w); err !== nothing)
-#                 t.Errorf("testSync: close: %v", err)
-#             end
-
+#             close(w)
+#             close(w1)
 #         end
-#         buf.ReadMode()
-#         out = Go.Slice(UInt8, hi - lo + 1)
-#         m, err = io.ReadAtLeast(r, out, hi - lo)
-#         t.Logf("#%d: read %d", i, m)
-#         if m != hi - lo || err !== nothing
-#             t.Errorf(
-#                 "testSync/%d (%d, %d, %s): read %d: %d, %v (%d left)",
-#                 i,
-#                 level,
-#                 length(input),
-#                 name,
-#                 hi - lo,
-#                 m,
-#                 err,
-#                 buf.buf.Len(),
-#             )
-#             return
-#         end
-#         if !bytes.Equal(input[lo:hi], out[begin:hi-lo])
-#             t.Errorf(
-#                 "testSync/%d: read wrong bytes: %x vs %x",
-#                 i,
-#                 input[lo:hi],
-#                 out[begin:hi-lo],
-#             )
-#             return
-#         end
-#         #  This test originally checked that after reading
-#         #  the first half of the input, there was nothing left
-#         #  in the read buffer (buf.buf.Len() != 0) but that is
-#         #  not necessarily the case: the write Flush may emit
-#         #  some extra framing bits that are not necessary
-#         #  to process to obtain the first half of the uncompressed
-#         #  data. The test ran correctly most of the time, because
-#         #  the background goroutine had usually read even
-#         #  those extra bits by now, but it's not a useful thing to
-#         #  check.
-#         buf.WriteMode()
-#         i += 1
+#         seekstart(buf)
+#         @test sprint(write, r) == String(copy(input[lo:hi]))
 #     end
-#     buf.ReadMode()
-#     out = Go.Slice(UInt8, 10)
-#     if (n, err = r.Read(out); n > 0 || err != io.EOF)
-#         t.Errorf(
-#             "testSync (%d, %d, %s): final Read: %d, %v (hex: %x)",
-#             level,
-#             length(input),
-#             name,
-#             n,
-#             err,
-#             out[0:n],
-#         )
-#     end
-#     if buf.buf.Len() != 0
-#         t.Errorf("testSync (%d, %d, %s): extra data at end", level, length(input), name)
-#     end
-#     r.Close()
+#     @test isempty(readavailable(r))
 #     #  stream should work for ordinary reader too
-#     r = NewReader(buf1)
-#     out, err = io.ReadAll(r)
-#     if err !== nothing
-#         t.Errorf("testSync: read: %s", err)
-#         return
-#     end
-#     r.Close()
-#     if !bytes.Equal(input, out)
-#         t.Errorf(
-#             "testSync: decompress(compress(data)) != data: level=%d input=%s",
-#             level,
-#             name,
-#         )
-#     end
+#     r1 = Flate.NewReader(buf1)
+#     out = sprint(write, r1)
+#     @test String(copy(input)) == out
 # end
 
-# function testToFromWithLevelAndLimit(
-#     t::testing.T,
-#     level::Int,
-#     input::Go.Slice{UInt8},
-#     name::String,
-#     limit::Int,
-# )
-#     local buffer::bytes.Buffer
-#     w = Flate.NewWriter(buffer, level)
-#     write(w, input)
-#     close(w)
-#     if limit > 0 && buffer.Len() > limit
-#         t.Errorf(
-#             "level: %d, length(compress(data)) = %d > limit = %d",
-#             level,
-#             buffer.Len(),
-#             limit,
-#         )
-#         return
-#     end
-#     if limit > 0
-#         t.Logf(
-#             "level: %d, size:%.2f%%, %d b\\n",
-#             level,
-#             Float64(buffer.Len() * 100) / Float64(limit),
-#             buffer.Len(),
-#         )
-#     r = NewReader(buffer)
-#     out, err = io.ReadAll(r)
-#     if err !== nothing
-#         t.Errorf("read: %s", err)
-#         return
-#     end
-#     r.Close()
-#     if !bytes.Equal(input, out)
-#         t.Errorf("decompress(compress(data)) != data: level=%d input=%s", level, name)
-#         return
-#     end
-#     testSync(t, level, input, name)
-# end
+function testToFromWithLevelAndLimit(
+    level::Int,
+    input::Go.Slice{UInt8},
+    name::String,
+    limit::Int,
+)
+    @info("--testToFromWithLevelAndLimit $level, $(length(input)), $name, $limit")
+    buffer = IOBuffer()
+    w = Flate.NewWriter(buffer, level)
+    write(w, input)
+    close(w)
+    if limit > 0
+        @test position(buffer) <= limit
+    end
+    seekstart(buffer)
+    r = Flate.NewReader(buffer)
+    out = sprint(write, r)
+    @test String(copy(input)) == out
+    # testSync(level, input, name)
+    return
+end
 
-# function testToFromWithLimit(
-#     t::testing.T,
-#     input::Go.Slice{UInt8},
-#     name::String,
-#     limit::Go.Slice{Int},
-# )
-#     i = 0
-#     while i < 10
-#         testToFromWithLevelAndLimit(t, i, input, name, limit[i])
-#         i += 1
-#     end
-#     #  Test HuffmanCompression
-#     testToFromWithLevelAndLimit(t, -2, input, name, limit[10])
-# end
+function testToFromWithLimit(
+    input::Go.Slice{UInt8},
+    name::String,
+    limit::Go.Array{Int},
+)
+    for i = 0:9
+        testToFromWithLevelAndLimit(i, input, name, limit[i])
+    end
+    #  Test HuffmanCompression
+    testToFromWithLevelAndLimit(-2, input, name, limit[10])
+end
 
-# @testset "TestDeflateInflate" begin
-#     t.Parallel()
-#     for (i, h) in deflateInflateTests
-#         if testing.Short() && length(h.in) > 10000
-#             continue
-#         end
-#         testToFromWithLimit(t, h.in, string("#%d", i), Go.Slice{Int}[])
-#     end
-# end
+@testset "TestDeflateInflate" begin
+    for (i, h) in enumerate(deflateInflateTests)
+        testToFromWithLimit(h.in, "#$i", Go.Array(Int, 11))
+    end
+end
 
 @testset "TestReverseBits" begin
     for h in reverseBitsTests
@@ -379,48 +233,48 @@ end
     end
 end
 
-mutable struct deflateInflateStringTest
+struct DeflateInflateStringTest
     filename::String
     label::String
-    limit::Go.Slice{Int}
+    limit::Go.Array{Int}
 end
 
-deflateInflateStringTests = deflateInflateStringTest[
-    deflateInflateStringTest(
-        "../testdata/e.txt",
+deflateInflateStringTests = DeflateInflateStringTest[
+    DeflateInflateStringTest(
+        "testdata/e.txt",
         "2.718281828...",
-        Go.Slice(Int[100018, 50650, 50960, 51150, 50930, 50790, 50790, 50790, 50790, 50790, 43683]),
+        Go.Array(Int[100018, 50650, 50960, 51150, 50930, 50790, 50790, 50790, 50790, 50790, 43683]),
     ),
-    deflateInflateStringTest(
-        "../../testdata/Isaac.Newton-Opticks.txt",
+    DeflateInflateStringTest(
+        "testdata/Isaac.Newton-Opticks.txt",
         "Isaac.Newton-Opticks",
-        Go.Slice(Int[567248, 218338, 198211, 193152, 181100, 175427, 175427, 173597, 173422, 173422, 325240]),
+        Go.Array(Int[567248, 218338, 198211, 193152, 181100, 175427, 175427, 173597, 173422, 173422, 325240]),
     ),
 ]
 
-# @testset "TestDeflateInflateString" begin
-#     for (_, test) in deflateInflateStringTests
-#         gold = read(test.filename)
-#         testToFromWithLimit(t, gold, test.label, test.limit)
-#     end
-# end
+@testset "TestDeflateInflateString" begin
+    for test in deflateInflateStringTests
+        path = joinpath(dirname(pathof(Flate)), "../test", test.filename)
+        gold = Go.Slice(read(path))
+        testToFromWithLimit(gold, test.label, test.limit)
+    end
+end
 
-# @testset "TestReaderDict" begin
-#     dict = "hello world"
-#     text = "hello again world"
-#     b = IOBuffer()
-#     w = Flate.NewWriter(b, 5)
-#     write(w, Go.Slice(dict))
-#     flush(w)
-#     seekstart(b)
-#     write(w, Go.Slice(text))
-#     close(w)
-#     r = Flate.NewReaderDict(b, Go.Slice(dict))
-#     data = readavailable(r)
-#     if String(data) != "hello again world"
-#         t.Fatalf("read returned %q want %q", String(data), text)
-#     end
-# end
+@testset "TestReaderDict" begin
+    dict = "hello world"
+    text = "hello again world"
+    b = IOBuffer()
+    w = Flate.NewWriter(b, 5)
+    write(w, Go.Slice(dict))
+    flush(w)
+    take!(b)
+    write(w, Go.Slice(text))
+    close(w)
+    seekstart(b)
+    r = Flate.NewReaderDict(b, Go.Slice(dict))
+    out = sprint(write, r)
+    @test text == out
+end
 
 @testset "TestWriterDict" begin
     dict = "hello world"
@@ -429,7 +283,7 @@ deflateInflateStringTests = deflateInflateStringTest[
     w = Flate.NewWriter(b, 5)
     write(w, Go.Slice(dict))
     flush(w)
-    seekstart(b)
+    take!(b)
     write(w, Go.Slice(text))
     close(w)
     b1 = IOBuffer()
@@ -438,7 +292,7 @@ deflateInflateStringTests = deflateInflateStringTest[
     close(w)
     bb = take!(b)
     bb1 = take!(b1)
-    @test_broken bb == bb1
+    @test bb == bb1
 end
 
 #  See https://golang.org/issue/2508
@@ -516,126 +370,54 @@ end
 #  recovers the original input. The Write sizes are near the thresholds in the
 #  compressor.encSpeed method (0, 16, 128), as well as near maxStoreBlockSize
 #  (65535).
-# @testset "TestBestSpeed" begin
-#     t.Parallel()
-#     abc = Go.Slice(UInt8, 128)
-#     for (i) in abc
-#         abc[i] = UInt8(i)
-#     end
+@testset "TestBestSpeed" begin
+    abc = Go.Slice(collect(0x00:0x7f))
+    abcabc = Go.Slice(repeat(copy(abc), div(131072, length(abc))))
+    want = Go.Slice(UInt8, 0)
+    testCases = Go.Slice([
+        Go.Slice([65536, 0]),
+        Go.Slice([65536, 1]),
+        Go.Slice([65536, 1, 256]),
+        Go.Slice([65536, 1, 65536]),
+        Go.Slice([65536, 14]),
+        Go.Slice([65536, 15]),
+        Go.Slice([65536, 16]),
+        Go.Slice([65536, 16, 256]),
+        Go.Slice([65536, 16, 65536]),
+        Go.Slice([65536, 127]),
+        Go.Slice([65536, 128]),
+        Go.Slice([65536, 128, 256]),
+        Go.Slice([65536, 128, 65536]),
+        Go.Slice([65536, 129]),
+        Go.Slice([65536, 65536, 256]),
+        Go.Slice([65536, 65536, 65536]),
+    ])
 
-#     abcabc = bytes.Repeat(abc, 131072 / length(abc))
-#     local want::Go.Slice{UInt8}
-
-#     testCases = Go.Slice{Go.Slice{Int}}[
-#         [65536, 0],
-#         [65536, 1],
-#         [65536, 1, 256],
-#         [65536, 1, 65536],
-#         [65536, 14],
-#         [65536, 15],
-#         [65536, 16],
-#         [65536, 16, 256],
-#         [65536, 16, 65536],
-#         [65536, 127],
-#         [65536, 128],
-#         [65536, 128, 256],
-#         [65536, 128, 65536],
-#         [65536, 129],
-#         [65536, 65536, 256],
-#         [65536, 65536, 65536],
-#     ]
-
-#     for (i, tc) in testCases
-#         if i >= 3 && testing.Short()
-#             break
-#         end
-
-#         for (_, firstN) in Go.Slice{Int}[1, 65534, 65535, 65536, 65537, 131072]
-
-#             tc[0] = firstN
-#             @label outer
-#             for (_, flush) in Go.Slice{Bool}[false, true]
-
-#                 buf = IOBuffer()
-#                 want = want[begin:0]
-#                 w = Flate.NewWriter(buf, BestSpeed)
-#                 if err !== nothing
-#                     t.Errorf(
-#                         "i=%d, firstN=%d, flush=%t: NewWriter: %v",
-#                         i,
-#                         firstN,
-#                         flush,
-#                         err,
-#                     )
-#                     continue
-#                 end
-
-#                 for (_, n) in tc
-#                     want = Go.append(want, abcabc[begin:n]...)
-#                     if (_, err = write(w, abcabc[begin:n]); err !== nothing)
-#                         t.Errorf(
-#                             "i=%d, firstN=%d, flush=%t: Write: %v",
-#                             i,
-#                             firstN,
-#                             flush,
-#                             err,
-#                         )
-#                         @goto GoTranspiler.Identifier("outer")
-#                     end
-
-#                     if !flush
-#                         continue
-#                     end
-
-#                     if (err = flush(w); err !== nothing)
-#                         t.Errorf(
-#                             "i=%d, firstN=%d, flush=%t: Flush: %v",
-#                             i,
-#                             firstN,
-#                             flush,
-#                             err,
-#                         )
-#                         @goto GoTranspiler.Identifier("outer")
-#                     end
-
-#                 end
-
-#                 if (err = close(w); err !== nothing)
-#                     t.Errorf("i=%d, firstN=%d, flush=%t: Close: %v", i, firstN, flush, err)
-#                     continue
-#                 end
-
-#                 r = NewReader(buf)
-#                 got, err = io.ReadAll(r)
-#                 if err !== nothing
-#                     t.Errorf(
-#                         "i=%d, firstN=%d, flush=%t: ReadAll: %v",
-#                         i,
-#                         firstN,
-#                         flush,
-#                         err,
-#                     )
-#                     continue
-#                 end
-
-#                 r.Close()
-#                 if !bytes.Equal(got, want)
-#                     t.Errorf(
-#                         "i=%d, firstN=%d, flush=%t: corruption during deflate-then-inflate",
-#                         i,
-#                         firstN,
-#                         flush,
-#                     )
-#                     continue
-#                 end
-
-#             end
-
-#         end
-
-#     end
-
-# end
+    for (i, tc) in Go.each(testCases)
+        for firstN in (1, 65534, 65535, 65536, 65537, 131072)
+            tc[0] = firstN
+            for flush in (false, true)
+                buf = IOBuffer()
+                want = want[begin:0]
+                w = Flate.NewWriter(buf, Flate.BestSpeed)
+                for n in tc
+                    println("i = $i, tc = $tc, firstN = $firstN, flush = $flush, n = $n")
+                    want = Go.append(want, abcabc[begin:n]...)
+                    nb = write(w, abcabc[begin:n])
+                    if !flush
+                        continue
+                    end
+                    Flate.flush(w)
+                end
+                close(w)
+                seekstart(buf)
+                r = Flate.NewReader(buf)
+                got = sprint(write, r)
+                @test got == String(copy(want))
+            end
+        end
+    end
+end
 
 #  failWriter fails with errIO exactly at the nth call to Write.
 # errIO = errors.New("IO error")
@@ -868,50 +650,38 @@ end
     end
 end
 
-# @testset "TestBestSpeedMaxMatchOffset" begin
-#     abc, xyz = "abcdefgh", "stuvwxyz"
-#     for matchBefore in (false, true)
-#         for extra in (0, inputMargin-1, inputMargin, inputMargin+1, 2*inputMargin)
-#             for offsetAdj = -5:5
-#                 report = (
-#                     (desc::String, err::error) -> begin
-#                         t.Errorf(
-#                             "matchBefore=%t, extra=%d, offsetAdj=%d: %s%v",
-#                             matchBefore,
-#                             extra,
-#                             offsetAdj,
-#                             desc,
-#                             err,
-#                         )
-#                     end
-#                 )
-#                 offset = maxMatchOffset + offsetAdj
-#                 #  Make src to be a []byte of the form
-#                 # 	"%s%s%s%s%s" % (abc, zeros0, xyzMaybe, abc, zeros1)
-#                 #  where:
-#                 # 	zeros0 is approximately maxMatchOffset zeros.
-#                 # 	xyzMaybe is either xyz or the empty string.
-#                 # 	zeros1 is between 0 and 30 zeros.
-#                 #  The difference between the two abc's will be offset, which
-#                 #  is maxMatchOffset plus or minus a small adjustment.
-#                 src = Go.Slice(UInt8, offset + sizeof(abc) + extra)
-#                 copy(src, abc)
-#                 if !matchBefore
-#                     copy(src[offset-length(xyz), :], xyz)
-#                 end
-#                 copy(src[offset, :], abc)
-#                 buf = IOBuffer()
-#                 w = Flate.NewWriter(buf, Flate.BestSpeed)
-#                 write(w, src)
-#                 close(w)
-#                 r = Flate.NewReader(buf)
-#                 dst = readavailable(r)
-#                 close(r)
-#                 @test dst == src
-#             end
-#         end
-#     end
-# end
+@testset "TestBestSpeedMaxMatchOffset" begin
+    abc, xyz = "abcdefgh", "stuvwxyz"
+    for matchBefore in (false, true)
+        for extra in (0, Flate.inputMargin-1, Flate.inputMargin, Flate.inputMargin+1, 2*Flate.inputMargin)
+            for offsetAdj = -5:5
+                offset = Flate.maxMatchOffset + offsetAdj
+                #  Make src to be a []byte of the form
+                # 	"%s%s%s%s%s" % (abc, zeros0, xyzMaybe, abc, zeros1)
+                #  where:
+                # 	zeros0 is approximately maxMatchOffset zeros.
+                # 	xyzMaybe is either xyz or the empty string.
+                # 	zeros1 is between 0 and 30 zeros.
+                #  The difference between the two abc's will be offset, which
+                #  is maxMatchOffset plus or minus a small adjustment.
+                src = Go.Slice(UInt8, offset + sizeof(abc) + extra)
+                copy(src, abc)
+                if !matchBefore
+                    copy(src[offset - sizeof(xyz), :], xyz)
+                end
+                copy(src[offset, :], abc)
+                buf = IOBuffer()
+                w = Flate.NewWriter(buf, Flate.BestSpeed)
+                write(w, src)
+                close(w)
+                seekstart(buf)
+                r = Flate.NewReader(buf)
+                dst = sprint(write, r)
+                @test dst == String(copy(src))
+            end
+        end
+    end
+end
 
 @testset "TestBestSpeedShiftOffsets" begin
     #  Test if shiftoffsets properly preserves matches and resets out-of-range matches

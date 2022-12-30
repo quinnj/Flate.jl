@@ -235,7 +235,8 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
     wPos = win[pos, :]
     minIndex = pos - windowSize
     i = prevHead
-    local offset, ok
+    offset::Int = 0
+    ok::Bool = false
     while tries > 0
         if wEnd == win[i+length]
             n = matchLen(win[i, :], wPos, minMatchLook)
@@ -485,7 +486,7 @@ function deflate(d::Compressor)
             end
             if Go.len(d.tokens) == maxFlateBlockTokens
                 # The block includes the current character
-                writeBlockd(d, d.tokens, d.index)
+                writeBlock(d, d.tokens, d.index)
                 d.tokens = d.tokens[begin:0]
             end
         else

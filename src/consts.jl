@@ -148,19 +148,19 @@ const bufferReset = typemax(Int32) - maxStoreBlockSize * 2
 
 function load32(b::Go.Slice{UInt8}, i::Integer)# ::UInt32
     #  Help the compiler eliminate bounds checks on the next line.
-    return UInt32(b[i+1]) | UInt32(b[i+2]) << 8 | UInt32(b[i+3]) << 16 | UInt32(b[i+4]) << 24
+    return UInt32(b[i]) | UInt32(b[i+1]) << 8 | UInt32(b[i+2]) << 16 | UInt32(b[i+3]) << 24
 end
 
 function load64(b::Go.Slice{UInt8}, i::Integer)# ::UInt64
     #  Help the compiler eliminate bounds checks on the next line.
-    return UInt64(b[i + 1]) |
-           UInt64(b[i + 2]) << 8 |
-           UInt64(b[i + 3]) << 16 |
-           UInt64(b[i + 4]) << 24 |
-           UInt64(b[i + 5]) << 32 |
-           UInt64(b[i + 6]) << 40 |
-           UInt64(b[i + 7]) << 48 |
-           UInt64(b[i + 8]) << 56
+    return UInt64(b[i]) |
+           UInt64(b[i + 1]) << 8 |
+           UInt64(b[i + 2]) << 16 |
+           UInt64(b[i + 3]) << 24 |
+           UInt64(b[i + 4]) << 32 |
+           UInt64(b[i + 5]) << 40 |
+           UInt64(b[i + 6]) << 48 |
+           UInt64(b[i + 7]) << 56
 end
 
 function hash(u::UInt32)# ::UInt32
