@@ -1,4 +1,4 @@
-#  HCode is a huffman code with a bit code and bit Go.len.
+#  HCode is a huffman code with a bit code and bit length.
 mutable struct HCode
     code::UInt16
     len::UInt16
@@ -20,7 +20,7 @@ struct ByFreq
 end
 ByFreq() = ByFreq(Go.Slice(LiteralNode, 0))
 
-#  set sets the code and Go.len of an HCode.
+#  set sets the code and length of an HCode.
 mutable struct LevelInfo
     level::Int32
     lastFreq::Int32
@@ -99,7 +99,7 @@ end
 
 function bitLength(h::HuffmanEncoder, freq::Go.Slice{Int32})# ::Int
     total::Int = 0
-    for (i, f) in Go.each(freq)
+    for (i, f) in range(freq)
         if f != 0
             total += Int(f) * Int(h.codes[i].len)
         end
@@ -108,7 +108,7 @@ function bitLength(h::HuffmanEncoder, freq::Go.Slice{Int32})# ::Int
 end
 
 #  bitCounts computes the number of literals assigned to each bit size in the Huffman encoding.
-#  It is only called when list.Go.len >= 3.
+#  It is only called when list.length >= 3.
 const maxBitsLimit = 16
 
 #  The cases of 0, 1, and 2 literals are handled by special case code.
@@ -128,7 +128,7 @@ function bitCounts(h::HuffmanEncoder, list::Go.Slice{LiteralNode}, maxBits::Inte
         error("flate: maxBits too large")
     end
 
-    n = Int32(Go.len(list))
+    n = Int32(length(list))
     list = list[0:n+1]
     list[n] = maxNode()
     #  The tree can't have greater depth than n - 1, no matter what. This
@@ -245,17 +245,17 @@ function assignEncodingAndSize(
     list::Go.Slice{LiteralNode},
 )
     code::UInt16 = 0
-    for (n, bits) in Go.each(bitCount)
+    for (n, bits) in range(bitCount)
         code <<= 1
         if n == 0 || bits == 0
             continue
         end
 
-        #  The literals list[Go.len(list)-bits] .. list[Go.len(list)-bits]
+        #  The literals list[length(list)-bits] .. list[length(list)-bits]
         #  are encoded using "bits" bits, and get the values
         #  code, code + 1, ....  The code values are
         #  assigned in literal order (not frequency order).
-        chunk = list[Go.len(list)-Int(bits), :]
+        chunk = list[length(list)-Int(bits), :]
         sort!(chunk, by=x->x.literal)
         h.lns = ByLiteral(chunk)
         for node in chunk
@@ -263,7 +263,7 @@ function assignEncodingAndSize(
                 HCode(reverseBits(code, UInt8(n)), UInt16(n))
             code += 1
         end
-        list = list[0:Go.len(list)-Int(bits)]
+        list = list[0:length(list)-Int(bits)]
     end
 
 end
@@ -272,17 +272,17 @@ end
 #  freq is an array of frequencies, in which freq[i] gives the frequency of literal i.
 #  maxBits  The maximum number of bits to use for any literal.
 function generate(h::HuffmanEncoder, freq::Go.Slice{Int32}, maxBits::Integer)
-    if Go.len(h.freqcache) == 0
+    if length(h.freqcache) == 0
         #  Allocate a reusable buffer with the longest possible frequency table.
         #  Possible lengths are codegenCodeCount, offsetCodeCount and maxNumLit.
         #  The largest of these is maxNumLit, so we allocate for that case.
         h.freqcache = Go.Slice(LiteralNode, maxNumLit + 1)
     end
 
-    list = h.freqcache[begin:Go.len(freq)+1]
+    list = h.freqcache[begin:length(freq)+1]
     #  Number of non-zero literals
     count = 0
-    for (i, f) in Go.each(freq)
+    for (i, f) in range(freq)
         if f != 0
             list[count] = LiteralNode(UInt16(i), f)
             count += 1
@@ -293,7 +293,7 @@ function generate(h::HuffmanEncoder, freq::Go.Slice{Int32}, maxBits::Integer)
 
     list = list[begin:count]
     if count <= 2
-        for (i, node) in Go.each(list)
+        for (i, node) in range(list)
             #  "list" is in order of increasing literal value.
             set(h.codes[node.literal], UInt16(i), 1)
         end

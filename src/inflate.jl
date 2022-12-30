@@ -103,7 +103,7 @@ function init(h::HuffmanDecoder, lengths::Go.Slice{Int})# ::Bool
         end
     end
 
-    for (i, n) in Go.each(lengths)
+    for (i, n) in range(lengths)
         if n == 0
             continue
         end
@@ -114,7 +114,7 @@ function init(h::HuffmanDecoder, lengths::Go.Slice{Int})# ::Bool
         reverse >>= UInt(16 - n)
         if n <= huffmanChunkBits
             off = reverse
-            while off < Go.len(h.chunks)
+            while off < length(h.chunks)
                 #  We should never need to overwrite
                 #  an existing chunk. Also, 0 is
                 #  never a valid chunk, because the
@@ -138,7 +138,7 @@ function init(h::HuffmanDecoder, lengths::Go.Slice{Int})# ::Bool
             linktab = h.links[value]
             reverse >>= huffmanChunkBits
             off = reverse
-            while off < Go.len(linktab)
+            while off < length(linktab)
                 if sanity && linktab[off] != 0
                     error("impossible: overwriting existing chunk")
                 end
@@ -149,7 +149,7 @@ function init(h::HuffmanDecoder, lengths::Go.Slice{Int})# ::Bool
     end
 
     if sanity
-        for (i, chunk) in Go.each(h.chunks)
+        for (i, chunk) in range(h.chunks)
             if chunk == 0
                 #  As an exception, in the degenerate
                 #  single-code case, we allow odd
@@ -198,7 +198,7 @@ Decompressor(r::IO, bits::Go.Array{Int}, codebits::Go.Array{Int}, dict::DictDeco
         r, 0, 0, 0, HuffmanDecoder(), HuffmanDecoder(), bits, codebits, dict, Go.Array(UInt8, 4), step, 0, false, Go.Slice(UInt8, 0), HuffmanDecoder(), nothing, 0, 0
     )
 
-Base.eof(f::Decompressor) = Go.len(f.toRead) == 0 && eof(f.r)
+Base.eof(f::Decompressor) = length(f.toRead) == 0 && eof(f.r)
 
 function nextBlock(f::Decompressor)
     while f.nb < 1 + 2
@@ -230,31 +230,31 @@ function nextBlock(f::Decompressor)
 end
 
 function Base.readavailable(f::Decompressor)
-    if Go.len(f.toRead) > 0
+    if length(f.toRead) > 0
         bytes = copy(f.toRead)
         f.toRead = f.toRead[0:0]
         return bytes
     end
     f.step(f)
-    if Go.len(f.toRead) == 0
+    if length(f.toRead) == 0
         #  Flush what's left in case of error
         f.toRead = readFlush(f.dict)
     end
-    return Go.len(f.toRead) == 0 ? UInt8[] : readavailable(f)
+    return length(f.toRead) == 0 ? UInt8[] : readavailable(f)
 end
 
 function Base.read(f::Decompressor, b::Go.Slice{UInt8})# ::Tuple{Int, error}
     while true
-        if Go.len(f.toRead) > 0
+        if length(f.toRead) > 0
             n = copy(b, f.toRead)
             f.toRead = f.toRead[n, :]
-            if Go.len(f.toRead) == 0
+            if length(f.toRead) == 0
                 return n
             end
             return n
         end
         f.step(f)
-        if Go.len(f.toRead) == 0
+        if length(f.toRead) == 0
             #  Flush what's left in case of error
             f.toRead = readFlush(f.dict)
         end
@@ -295,7 +295,7 @@ function readHuffman(f::Decompressor)# ::error
         f.b >>= 3
         f.nb -= 3
     end
-    for i = nclen:(Go.len(codeOrder) - 1)
+    for i = nclen:(length(codeOrder) - 1)
         f.codebits[codeOrder[i]] = 0
     end
     if !init(f.h1, f.codebits[:])
@@ -508,7 +508,7 @@ end
 #  It pauses for reads when f.hist is full.
 function copyData(f::Decompressor)
     buf = writeSlice(f.dict)
-    if Go.len(buf) > f.copyLen
+    if length(buf) > f.copyLen
         buf = buf[begin:f.copyLen]
     end
     cnt = readbytes!(f.r, copy(buf))

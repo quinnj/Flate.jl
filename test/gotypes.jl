@@ -14,19 +14,18 @@ using Flate.GoTypes, Test
     @test x[0] == 1
     @test x[9] == 2
 
-    x = Go.Array(Int, 1, 2, 3)
+    x = Go.Array([1, 2, 3])
     @test length(x) == 3
     @test x[0] == 1
     @test x[1] == 2
     @test x[2] == 3
     @test_throws BoundsError x[3]
 
-    @test x == Go.Array(1, 2, 3)
+    @test x == Go.Array([1, 2, 3])
 end
 
 # Test GoSlice
 @testset "GoSlice" begin
-
     x = Go.Array(Int, 10)
     x[0] = 1
     x[9] = 2
@@ -91,21 +90,21 @@ end
     @test Go.cap(s) == 20
 
     # slice of slices works
-    s1 = Go.Slice(0, 1, 2, 3, 4)
-    s = Go.Slice(s1)
+    s1 = Go.Slice([0, 1, 2, 3, 4])
+    s = Go.Slice([s1])
     @test s[0][4] == 4
 
     # test copy between GoSlices
-    s1 = Go.Slice(0, 1, 2, 3, 4)
-    s2 = Go.Slice(5, 6, 7, 8, 9)
+    s1 = Go.Slice([0, 1, 2, 3, 4])
+    s2 = Go.Slice([5, 6, 7, 8, 9])
     copy(s1, s2)
     @test s1 == s2
 
     # test append to GoSlice
-    s1 = Go.Slice(0, 1, 2, 3, 4)
+    s1 = Go.Slice([0, 1, 2, 3, 4])
     s1 = Go.append(s1, 5, 6)
-    @test s1 == Go.Slice(0, 1, 2, 3, 4, 5, 6)
-    x = Go.Array(0, 1, 2, 3, 4)
+    @test s1 == Go.Slice([0, 1, 2, 3, 4, 5, 6])
+    x = Go.Array([0, 1, 2, 3, 4])
     s = x[1:2]
     # there is enough space, so this doesn't allocate
     # a new GoArray
@@ -113,7 +112,7 @@ end
     s1[0] = 10
     @test s1[0] == x[1] == 10
 
-    x = Go.Array(0, 1, 2, 3, 4)
+    x = Go.Array([0, 1, 2, 3, 4])
     # slice of full array
     s = x[0, :]
     @test s == x

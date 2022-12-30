@@ -120,7 +120,7 @@ function fillDeflate(d::Compressor, b::Go.Slice{UInt8})# ::Int
 
             # Iterate over slices instead of arrays to avoid copying
             # the entire table onto the stack (Issue #18625).
-            for (i, v) in Go.each(d.hashPrev)
+            for (i, v) in range(d.hashPrev)
                 if Int(v) > delta
                     d.hashPrev[i] = UInt32(Int(v) - delta)
                 else
@@ -128,7 +128,7 @@ function fillDeflate(d::Compressor, b::Go.Slice{UInt8})# ::Int
                 end
             end
 
-            for (i, v) in Go.each(d.hashHead)
+            for (i, v) in range(d.hashHead)
                 if Int(v) > delta
                     d.hashHead[i] = UInt32(Int(v) - delta)
                 else
@@ -171,8 +171,8 @@ function fillWindow(d::Compressor, b::Go.Slice{UInt8})
     end
 
     # If we are given too much, cut it.
-    if Go.len(b) > windowSize
-        b = b[(Go.len(b)-windowSize), :]
+    if length(b) > windowSize
+        b = b[(length(b)-windowSize), :]
     end
 
     # Add all to window.
@@ -186,14 +186,14 @@ function fillWindow(d::Compressor, b::Go.Slice{UInt8})
             _end = n
         end
         toCheck = d.window[index:_end]
-        dstSize = Go.len(toCheck) - minMatchLength + 1
+        dstSize = length(toCheck) - minMatchLength + 1
         if dstSize <= 0
             continue
         end
 
         dst = d.hashMatch[begin:dstSize]
         d.bulkHasher(toCheck, dst)
-        for (i, val) in Go.each(dst)
+        for (i, val) in range(dst)
             di = i + index
             hh = d.hashHead[val & hashMask]
             # Get previous value with the same hash.
@@ -209,9 +209,9 @@ function fillWindow(d::Compressor, b::Go.Slice{UInt8})
     return
 end
 
-# Try to find a match starting at index whose Go.len is greater than prevSize.
+# Try to find a match starting at index whose length is greater than prevSize.
 # We only look at chainCount possibilities before giving up.
-function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, lookahead::Int)# ::Tuple{Go.len::Int, offset::Int}
+function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, lookahead::Int)# ::Tuple{length::Int, offset::Int}
     minMatchLook = maxMatchLength
     if lookahead < minMatchLook
         minMatchLook = lookahead
@@ -219,7 +219,7 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
 
     win = d.window[0:pos+minMatchLook]
     # We quit when we get a match that's at least nice long
-    nice = Go.len(win) - pos
+    nice = Base.length(win) - pos
     if d.compressionLevel.nice < nice
         nice = d.compressionLevel.nice
     end
@@ -265,7 +265,7 @@ function findMatch(d::Compressor, pos::Int, prevHead::Int, prevLength::Int, look
 end
 
 function writeStoredBlock(d::Compressor, buf::Go.Slice{UInt8})# ::error
-    writeStoredHeader(d.w, Go.len(buf), false)
+    writeStoredHeader(d.w, length(buf), false)
     writeBytes(d.w, buf)
     return
 end
@@ -274,7 +274,7 @@ const hashmul = 0x1e35a7bd
 
 # hash4 returns a hash representation of the first 4 bytes
 # of the supplied slice.
-# The caller must ensure that Go.len(b) >= 4.
+# The caller must ensure that length(b) >= 4.
 function hash4(b::Go.Slice{UInt8})# ::UInt32
     return ((UInt32(b[3]) |
            UInt32(b[2]) << 8 |
@@ -285,12 +285,12 @@ end
 # bulkHash4 will compute hashes using the same
 # algorithm as hash4
 function bulkHash4(b::Go.Slice{UInt8}, dst::Go.Slice{UInt32})
-    if Go.len(b) < minMatchLength
+    if length(b) < minMatchLength
         return
     end
     hb = UInt32(b[3]) | UInt32(b[2]) << 8 | UInt32(b[1]) << 16 | UInt32(b[0]) << 24
     dst[0] = (hb * hashmul) >> (32 - hashBits)
-    _end = Go.len(b) - minMatchLength + 1
+    _end = length(b) - minMatchLength + 1
     for i = 1:(_end - 1)
         hb = hb << 8 | UInt32(b[i+3])
         dst[i] = (hb * hashmul) >> (32 - hashBits)
@@ -298,12 +298,12 @@ function bulkHash4(b::Go.Slice{UInt8}, dst::Go.Slice{UInt32})
 end
 
 # matchLen returns the number of matching bytes in a and b
-# up to Go.len 'max'. Both slices must be at least 'max'
+# up to length 'max'. Both slices must be at least 'max'
 # bytes in size.
 function matchLen(a::Go.Slice{UInt8}, b::Go.Slice{UInt8}, max::Int)# ::Int
     a = a[begin:max]
-    b = b[begin:Go.len(a)]
-    for (i, av) in Go.each(a)
+    b = b[begin:length(a)]
+    for (i, av) in range(a)
         if b[i] != av
             return i
         end
@@ -338,7 +338,7 @@ function encSpeed(d::Compressor)
     # Encode the block.
     d.tokens = encode(d.bestSpeed, d.tokens[begin:0], d.window[begin:d.windowEnd])
     # If we removed less than 1/16th, Huffman compress the block.
-    if Go.len(d.tokens) > d.windowEnd - ( d.windowEnd >> 4)
+    if length(d.tokens) > d.windowEnd - ( d.windowEnd >> 4)
         writeBlockHuff(d.w, false, d.window[begin:d.windowEnd])
     else
         writeBlockDynamic(d.w, d.tokens, false, d.window[begin:d.windowEnd])
@@ -386,7 +386,7 @@ function deflate(d::Compressor)
                     d.tokens = Go.append(d.tokens, literalToken(UInt32(d.window[d.index-1])))
                     d.byteAvailable = false
                 end
-                if Go.len(d.tokens) > 0
+                if length(d.tokens) > 0
                     writeBlock(d, d.tokens, d.index)
                     d.tokens = d.tokens[begin:0]
                 end
@@ -484,7 +484,7 @@ function deflate(d::Compressor)
                 # item into the table.
                 d.index += d.length
             end
-            if Go.len(d.tokens) == maxFlateBlockTokens
+            if length(d.tokens) == maxFlateBlockTokens
                 # The block includes the current character
                 writeBlock(d, d.tokens, d.index)
                 d.tokens = d.tokens[begin:0]
@@ -496,7 +496,7 @@ function deflate(d::Compressor)
                     i = d.index
                 end
                 d.tokens = Go.append(d.tokens, literalToken(UInt32(d.window[i])))
-                if Go.len(d.tokens) == maxFlateBlockTokens
+                if length(d.tokens) == maxFlateBlockTokens
                     writeBlock(d, d.tokens, i + 1)
                     d.tokens = d.tokens[begin:0]
                 end
@@ -526,7 +526,7 @@ end
 # when the d.window is full or we are at the end of the stream.
 # Any error that occurred will be in d.err
 function storeHuff(d::Compressor)
-    if d.windowEnd < Go.len(d.window) && !d.sync || d.windowEnd == 0
+    if d.windowEnd < length(d.window) && !d.sync || d.windowEnd == 0
         return
     end
     writeBlockHuff(d.w, false, d.window[begin:d.windowEnd])
@@ -535,8 +535,8 @@ function storeHuff(d::Compressor)
 end
 
 function Base.write(d::Compressor, b::Go.Slice{UInt8})# ::Tuple{n::Int, err::error}
-    n = Go.len(b)
-    while Go.len(b) > 0
+    n = length(b)
+    while length(b) > 0
         d.step(d)
         b = b[d.fill(d, b), :]
     end

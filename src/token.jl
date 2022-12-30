@@ -85,7 +85,7 @@ function offset(t::Token)# ::UInt32
     return UInt32(t) & UInt32(offsetMask)
 end
 
-function len(t::Token)# ::UInt32
+function Base.length(t::Token)# ::UInt32
     return (UInt32(t) - UInt32(matchType)) >> lengthShift
 end
 

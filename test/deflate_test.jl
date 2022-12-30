@@ -76,7 +76,7 @@ reverseBitsTests = reverseBitsTest[
                 dst[i] = UInt32(i + 100)
             end
             Flate.bulkHash4(y, dst)
-            for (i, got) in Go.each(dst)
+            for (i, got) in range(dst)
                 want = Flate.hash4(y[i, :])
                 @test got == want
             end
@@ -393,7 +393,7 @@ end
         Go.Slice([65536, 65536, 65536]),
     ])
 
-    for (i, tc) in Go.each(testCases)
+    for (i, tc) in range(testCases)
         for firstN in (1, 65534, 65535, 65536, 65537, 131072)
             tc[0] = firstN
             for flush in (false, true)
@@ -691,18 +691,18 @@ end
     testData = Go.Slice(rand(UInt8, 32))
     #  Encode the testdata with clean state.
     #  Second part should pick up matches from the first block.
-    wantFirstTokens = Go.len(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
-    wantSecondTokens = Go.len(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
+    wantFirstTokens = length(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
+    wantSecondTokens = length(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
     @test wantFirstTokens > wantSecondTokens
     #  Forward the current indicator to before wraparound.
-    enc.cur = Flate.bufferReset - Int32(Go.len(testData))
+    enc.cur = Flate.bufferReset - Int32(length(testData))
     #  Part 1 before wrap, should match clean state.
-    got = Go.len(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
+    got = length(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
     @test wantFirstTokens == got
     #  Verify we are about to wrap.
     @test enc.cur == Flate.bufferReset
     #  Part 2 should match clean state as well even if wrapped.
-    got = Go.len(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
+    got = length(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
     @test wantSecondTokens == got
     #  Verify that we wrapped.
     @test enc.cur < Flate.bufferReset
@@ -710,6 +710,6 @@ end
     enc.cur = Flate.bufferReset
     Flate.shiftOffsets(enc)
     #  Ensure that no matches were picked up.
-    got = Go.len(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
+    got = length(Flate.encode(enc, Go.Slice(Flate.Token, 0), testData))
     @test wantFirstTokens == got
 end

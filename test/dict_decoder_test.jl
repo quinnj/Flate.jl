@@ -98,7 +98,7 @@ using Flate, Test, Flate.Go
 
     writeCopy(Flate.histSize(dd), 10)
     sl = Go.Slice(want)
-    write(want, sl[want.size-Flate.histSize(dd):Go.len(sl)][begin:10])
+    write(want, sl[want.size-Flate.histSize(dd):length(sl)][begin:10])
     write(got, Flate.readFlush(dd))
     @test String(take!(got)) == String(take!(want))
 end

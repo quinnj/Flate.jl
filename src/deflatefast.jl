@@ -36,16 +36,16 @@ function encode(e::DeflateFast, dst::Go.Slice{Token}, src::Go.Slice{UInt8})# ::G
 
     #  This check isn't in the Snappy implementation, but there, the caller
     #  instead of the callee handles this case.
-    if Go.len(src) < minNonLiteralBlockSize
+    if length(src) < minNonLiteralBlockSize
         e.cur += maxStoreBlockSize
         e.prev = e.prev[begin:0]
         return emitLiteral(dst, src)
     end
 
-    #  sLimit is when to stop looking for offset/Go.len copies. The inputMargin
+    #  sLimit is when to stop looking for offset/length copies. The inputMargin
     #  lets us use a fast path for emitLiteral in the main loop, while we are
     #  looking for copies.
-    sLimit = Int32(Go.len(src) - inputMargin)
+    sLimit = Int32(length(src) - inputMargin)
     #  nextEmit is where in src the next emitLiteral should start from.
     nextEmit = Int32(0)
     s = Int32(0)
@@ -114,7 +114,7 @@ function encode(e::DeflateFast, dst::Go.Slice{Token}, src::Go.Slice{UInt8})# ::G
             s += 4
             t = candidate.offset - e.cur + 4
             l = matchLen(e, s, t, src)
-            #  matchToken is flate's equivalent of Snappy's emitCopy. (Go.len,offset)
+            #  matchToken is flate's equivalent of Snappy's emitCopy. (length,offset)
             dst = Go.append(dst,
                 matchToken(
                     UInt32(l + 4 - baseMatchLength),
@@ -153,11 +153,11 @@ function encode(e::DeflateFast, dst::Go.Slice{Token}, src::Go.Slice{UInt8})# ::G
     end
 
 @label emitRemainder
-    if Int(nextEmit) < Go.len(src)
+    if Int(nextEmit) < length(src)
         dst = emitLiteral(dst, src[nextEmit, :])
     end
-    e.cur += Int32(Go.len(src))
-    e.prev = e.prev[begin:Go.len(src)]
+    e.cur += Int32(length(src))
+    e.prev = e.prev[begin:length(src)]
     copy(e.prev, src)
     return dst
 end
@@ -169,29 +169,29 @@ function emitLiteral(dst::Go.Slice{Token}, lit::Go.Slice{UInt8})# ::Vector{Token
     return dst
 end
 
-#  matchLen returns the match Go.len between src[s:] and src[t:].
+#  matchLen returns the match length between src[s:] and src[t:].
 #  t can be negative to indicate the match is starting in e.prev.
 #  We assume that src[s-4:s] and src[t-4:t] already match.
 function matchLen(e::DeflateFast, s::Integer, t::Integer, src::Go.Slice{UInt8})# ::Int32
     s1 = Int(s) + maxMatchLength - 4
-    if s1 > Go.len(src)
-        s1 = Go.len(src)
+    if s1 > length(src)
+        s1 = length(src)
     end
     #  If we are inside the current block
     if t >= 0
         b = src[t, :]
         a = src[s:s1]
-        b = b[begin:Go.len(a)]
+        b = b[begin:length(a)]
         for i in eachindex(a)
             if a[i] != b[i]
                 return Int32(i)
             end
         end
-        return Int32(Go.len(a))
+        return Int32(length(a))
     end
 
     #  We found a match in the previous block.
-    tp = Int32(Go.len(e.prev)) + t
+    tp = Int32(length(e.prev)) + t
     if tp < 0
         return 0
     end
@@ -199,10 +199,10 @@ function matchLen(e::DeflateFast, s::Integer, t::Integer, src::Go.Slice{UInt8})#
     #  Extend the match to be as long as possible.
     a = src[s:s1]
     b = e.prev[tp, :]
-    if Go.len(b) > Go.len(a)
-        b = b[begin:Go.len(a)]
+    if length(b) > length(a)
+        b = b[begin:length(a)]
     end
-    a = a[begin:Go.len(b)]
+    a = a[begin:length(b)]
     for i in eachindex(b)
         if a[i] != b[i]
             return Int32(i)
@@ -210,19 +210,19 @@ function matchLen(e::DeflateFast, s::Integer, t::Integer, src::Go.Slice{UInt8})#
     end
     #  If we reached our limit, we matched everything we are
     #  allowed to in the previous block and we return.
-    n = Int32(Go.len(b))
+    n = Int32(length(b))
     if Int(s + n) == s1
         return n
     end
     #  Continue looking for more matches in the current block.
     a = src[s+n:s1]
-    b = src[begin:Go.len(a)]
+    b = src[begin:length(a)]
     for i in eachindex(a)
         if a[i] != b[i]
             return Int32(i) + n
         end
     end
-    return Int32(Go.len(a)) + n
+    return Int32(length(a)) + n
 end
 
 #  Reset resets the encoding history.
@@ -244,7 +244,7 @@ end
 # 
 #  See https://golang.org/issue/18636 and https://github.com/golang/go/issues/34121.
 function shiftOffsets(e::DeflateFast)
-    if Go.len(e.prev) == 0
+    if length(e.prev) == 0
         for i in eachindex(e.table)
             e.table[i] = TableEntry()
         end

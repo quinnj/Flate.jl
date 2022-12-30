@@ -19,12 +19,12 @@ function init(dd::DictDecoder, size::Int, dict::Go.Slice{UInt8})
         dd.hist = Go.Slice(UInt8, size)
     end
     dd.hist = dd.hist[begin:size]
-    if Go.len(dict) > Go.len(dd.hist)
-        dict = dict[(Go.len(dict)-Go.len(dd.hist)), :]
+    if length(dict) > length(dd.hist)
+        dict = dict[(length(dict)-length(dd.hist)), :]
     end
 
     dd.wrPos = copy(dd.hist, dict)
-    if dd.wrPos == Go.len(dd.hist)
+    if dd.wrPos == length(dd.hist)
         dd.wrPos = 0
         dd.full = true
     end
@@ -35,7 +35,7 @@ end
 #  histSize reports the total amount of historical data in the dictionary.
 function histSize(dd::DictDecoder)# ::Int
     if dd.full
-        return Go.len(dd.hist)
+        return length(dd.hist)
     end
     return dd.wrPos
 end
@@ -47,7 +47,7 @@ end
 
 #  availWrite reports the available amount of output buffer space.
 function availWrite(dd::DictDecoder)# ::Int
-    return Go.len(dd.hist) - dd.wrPos
+    return length(dd.hist) - dd.wrPos
 end
 
 #  writeSlice returns a slice of the available buffer to write data to.
@@ -82,19 +82,19 @@ function writeCopy(dd::DictDecoder, dist::Int, length::Int)# ::Int
     dstPos = dstBase
     srcPos = dstPos - dist
     endPos = dstPos + length
-    if endPos > Go.len(dd.hist)
-        endPos = Go.len(dd.hist)
+    if endPos > Base.length(dd.hist)
+        endPos = Base.length(dd.hist)
     end
 
     #  Copy non-overlapping section after destination position.
     # 
-    #  This section is non-overlapping in that the copy Go.len for this section
+    #  This section is non-overlapping in that the copy length for this section
     #  is always less than or equal to the backwards distance. This can occur
     #  if a distance refers to data that wraps-around in the buffer.
     #  Thus, a backwards copy is performed here; that is, the exact bytes in
     #  the source prior to the copy is placed in the destination.
     if srcPos < 0
-        srcPos += Go.len(dd.hist)
+        srcPos += Base.length(dd.hist)
         dstPos += copy(dd.hist[dstPos:endPos], dd.hist[srcPos, :])
         srcPos = 0
     end
@@ -116,7 +116,7 @@ end
 function tryWriteCopy(dd::DictDecoder, dist::Int, length::Int)# ::Int
     dstPos = dd.wrPos
     endPos = dstPos + length
-    if dstPos < dist || endPos > Go.len(dd.hist)
+    if dstPos < dist || endPos > Base.length(dd.hist)
         return 0
     end
     dstBase = dstPos
@@ -134,7 +134,7 @@ end
 function readFlush(dd::DictDecoder)# ::Go.Slice{UInt8}
     toRead = dd.hist[dd.rdPos:dd.wrPos]
     dd.rdPos = dd.wrPos
-    if dd.wrPos == Go.len(dd.hist)
+    if dd.wrPos == length(dd.hist)
         dd.wrPos, dd.rdPos = 0, 0
         dd.full = true
     end

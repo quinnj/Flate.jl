@@ -31,7 +31,7 @@ function testWriterEOF(ttype::String, test::huffTest, useInput::Bool)
     end
     flush(bw)
     b = Go.Slice(buf)
-    @test Go.len(b) != 0
+    @test length(b) != 0
     @test (b[0] & 1) == 1
     @info("EOF ok")
 end

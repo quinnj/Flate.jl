@@ -4,16 +4,16 @@ export Go
 
 module Go
 
-export Array, Slice, len, cap, append, each
+export Array, Slice, length, cap, append
 
 abstract type AbstractGoArray{T} <: AbstractVector{T} end
 
-Base.size(x::AbstractGoArray) = (len(x),)
+Base.size(x::AbstractGoArray) = (length(x),)
 Base.firstindex(::AbstractGoArray) = 0
-Base.lastindex(v::AbstractGoArray) = len(v) - 1
+Base.lastindex(v::AbstractGoArray) = length(v) - 1
 # go range indexing is half-open, so need to adjust last down
 Base.checkbounds(v::AbstractGoArray, I::AbstractUnitRange) = checkbounds(Bool, v, first(I):(last(I)-1)) || Base.throw_boundserror(v, I)
-Base.axes(v::AbstractGoArray) = (ZeroTo(len(v) - 1),)
+Base.axes(v::AbstractGoArray) = (ZeroTo(length(v) - 1),)
 
 # utility type like Base.OneTo, but for 0-based indexing
 struct ZeroTo <: AbstractUnitRange{Int}
@@ -27,8 +27,7 @@ Base.first(r::ZeroTo) = 0
 Base.axes(r::ZeroTo) = (r,)
 Base.show(io::IO, r::ZeroTo) = print(io, "0:", r.stop)
 
-function Base.getindex(v::ZeroTo, i::Integer)
-    @inline
+Base.@propagate_inbounds function Base.getindex(v::ZeroTo, i::Integer)
     i isa Bool && throw(ArgumentError("invalid index: $i of type Bool"))
     @boundscheck ((i > -1) & (i <= v.stop)) || Base.throw_boundserror(v, i)
     return Int(i)
@@ -40,8 +39,8 @@ end
 struct Array{T} <: AbstractGoArray{T}
     data::Base.Vector{T}
 
-    function Array(::Type{T}, len::Integer) where {T}
-        x = new{T}(Base.Vector{T}(undef, len))
+    function Array(::Type{T}, length::Integer) where {T}
+        x = new{T}(Base.Vector{T}(undef, length))
         if isbitstype(T)
             # memset to zero out bits
             ccall(:memset, Ptr{Cvoid}, (Ptr{Cvoid}, Cint, Csize_t), x.data, 0, sizeof(x.data))
@@ -49,9 +48,9 @@ struct Array{T} <: AbstractGoArray{T}
         return x
     end
 
-    function Array(::Type{T}, len::Integer, len2::Integer) where {T}
-        x = new{Array{T}}(Base.Vector{Array{T}}(undef, len))
-        for i = 1:len
+    function Array(::Type{T}, length::Integer, len2::Integer) where {T}
+        x = new{Array{T}}(Base.Vector{Array{T}}(undef, length))
+        for i = 1:length
             x.data[i] = Array(T, len2)
         end
         return x
@@ -60,21 +59,10 @@ struct Array{T} <: AbstractGoArray{T}
     function Array(x::Base.Vector{T}) where {T}
         return new{T}(x)
     end
-
-    function Array(::Type{T}, x::T...) where {T}
-        data = Base.Vector{T}(undef, length(x))
-        for i = 1:length(x)
-            data[i] = x[i]
-        end
-        return new{T}(data)
-    end
 end
 
-Array(x::T...) where {T} = Array(T, x...)
-Array(::Type{T}, x...) where {T} = Array([convert(T, v) for v in x])
-
 Base.copy(x::Array) = x.data
-len(x::Array) = length(x.data)
+Base.length(x::Array) = length(x.data)
 Base.isassigned(v::Array, i::Integer) = isassigned(v.data, i + 1)
 
 Base.@propagate_inbounds function Base.getindex(v::Array, i::Integer)
@@ -98,26 +86,22 @@ struct Slice{T} <: AbstractGoArray{T}
 end
 
 Slice(io::IOBuffer) = Slice{UInt8}(io.data, 0, io.size)
-Slice(x::Base.Vector{T}) where {T} = Slice{T}(x, 0, len(x))
+Slice(x::Base.Vector{T}) where {T} = Slice{T}(x, 0, length(x))
 Slice(x::String, i::Integer, j::Integer) = Slice{UInt8}(unsafe_wrap(Vector{UInt8}, x), i, j)
-Slice(x::String) = Slice(x, 0, len(x))
+Slice(x::String) = Slice(x, 0, sizeof(x))
 Slice(x::Array{T}, i::Integer, j::Integer) where {T} = Slice{T}(x.data, i, j)
-Slice(x::Array) = Slice(x, 0, len(x))
-Slice(::Type{T}, x::T...) where {T} = Slice(Array(T, x...))
-Slice(x::T...) where {T} = Slice(Array(x...))
+Slice(x::Array) = Slice(x, 0, length(x))
 
 # Slice constructors that generate Array
-Slice(::Type{T}, len::Integer) where {T} = Slice(Array(T, len))
-Slice(::Type{T}, len::Integer, cap::Integer) where {T} = Slice(Array(T, cap), 0, len)
+Slice(::Type{T}, length::Integer) where {T} = Slice(Array(T, length))
+Slice(::Type{T}, length::Integer, cap::Integer) where {T} = Slice(Array(T, cap), 0, length)
 
-Base.similar(a::Slice, ::Type{T}) where {T} = Slice(T, len(a))
+Base.similar(a::Slice, ::Type{T}) where {T} = Slice(T, length(a))
 Base.similar(::Slice, ::Type{T}, dims::Tuple{ZeroTo}) where {T} = Slice(T, length(dims[1]))
 
 Base.copy(x::Slice) = @view x.data[x.i + 1:x.j]
-len(v::Base.Vector) = length(v)
-len(v::String) = sizeof(v)
-len(v::Slice) = v.j - v.i
-cap(v::Slice) = len(v.data) - v.i
+Base.length(v::Slice) = v.j - v.i
+cap(v::Slice) = length(v.data) - v.i
 
 Base.isassigned(v::Slice, i::Integer) = isassigned(v.data, i + v.i + 1)
 
@@ -145,11 +129,11 @@ end
 # and not 1 past the last index
 Base.@propagate_inbounds function Base.getindex(v::Array{T}, i::Integer, ::Colon) where {T}
     @boundscheck checkbounds(v, i)
-    return Slice{T}(v.data, i, len(v))
+    return Slice{T}(v.data, i, length(v))
 end
 
-# for slices, [lo:]
-Base.@propagate_inbounds Base.getindex(v::Slice, i::Integer, ::Colon) = v[i:len(v)]
+# for slices, [lo:] -> [lo, :]
+Base.@propagate_inbounds Base.getindex(v::Slice, i::Integer, ::Colon) = v[i:length(v)]
 
 # indexing Slice with range produces relative Slice w/ same underlying Array
 Base.@propagate_inbounds function Base.getindex(v::Slice{T}, r::UnitRange{<:Integer}) where {T}
@@ -168,7 +152,7 @@ Base.getindex(v::Array, ::Colon) = Slice(v)
 # copy between slices
 Base.copy(dest::Slice{T}, src::String) where {T} = copy(dest, Slice(src))
 function Base.copy(dest::Slice{T}, src::Slice{T}) where {T}
-    n = min(len(dest), len(src))
+    n = min(length(dest), length(src))
     for i in 0:(n - 1)
         # TODO: what about slices that overlap underlying Array?
         dest[i] = src[i]
@@ -177,9 +161,9 @@ function Base.copy(dest::Slice{T}, src::Slice{T}) where {T}
 end
 
 # append elements to Slice
-# allocates new underlying Array if there isn't enough capacity
+# resizes underlying Base.Array if there isn't enough capacity
 function append(v::Slice{T}, x::T...) where {T}
-    n = len(v)
+    n = length(v)
     m = n + length(x)
     if m > cap(v)
         resize!(v.data, m)
@@ -191,16 +175,14 @@ function append(v::Slice{T}, x::T...) where {T}
     return v
 end
 
-struct EachIterator{T <: AbstractGoArray}
+struct RangeIterator{T <: AbstractGoArray}
     itr::T
 end
 
-each(v::AbstractGoArray) = EachIterator(v)
-
-Base.iterate(itr::EachIterator) = ((0, itr.itr[0]), 1)
-Base.iterate(itr::EachIterator, i) = i >= len(itr.itr) ? nothing : ((i, itr.itr[i]), i + 1)
-Base.length(itr::EachIterator) = len(itr.itr)
-Base.eltype(itr::EachIterator) = Tuple{Int, eltype(itr.itr)}
+Base.range(v::AbstractGoArray) = RangeIterator(v)
+Base.iterate(itr::RangeIterator, i=0) = i >= length(itr.itr) ? nothing : ((i, itr.itr[i]), i + 1)
+Base.length(itr::RangeIterator) = length(itr.itr)
+Base.eltype(itr::RangeIterator) = Tuple{Int, eltype(itr.itr)}
 
 end # module Go
 using .Go

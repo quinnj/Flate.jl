@@ -207,7 +207,7 @@ end
 
 # dynamicSize returns the size of dynamically encoded data in bits.
 function dynamicSize(w::HuffmanBitWriter, litEnc::HuffmanEncoder, offEnc::HuffmanEncoder, extraBits::Integer)# ::Tuple{size::Int, numCodegens::Int}
-    numCodegens = Go.len(w.codegenFreq)
+    numCodegens = length(w.codegenFreq)
     while numCodegens > 4 && w.codegenFreq[codegenOrder[numCodegens-1]] == 0
         numCodegens -= 1
     end
@@ -236,11 +236,11 @@ end
 # The function returns the size in bits and whether the block
 # fits inside a single block.
 function storedSize(w::HuffmanBitWriter, in::Go.Slice{UInt8})# ::Tuple{Int, Bool}
-    if Go.len(in) == 0
+    if length(in) == 0
         return 0, false
     end
-    if Go.len(in) <= maxStoreBlockSize
-        return (Go.len(in) + 5) * 8, true
+    if length(in) <= maxStoreBlockSize
+        return (length(in) + 5) * 8, true
     end
     return 0, false
 end
@@ -383,7 +383,7 @@ function writeBlock(
     end
     # Stored bytes?
     if storable && ss < size
-        writeStoredHeader(w, Go.len(input), eof)
+        writeStoredHeader(w, length(input), eof)
         writeBytes(w, input)
         return
     end
@@ -420,7 +420,7 @@ function writeBlockDynamic(
     # Store bytes, if we don't get a reasonable improvement.
     ssize, storable = storedSize(w, input)
     if (storable && ssize < size + size >> 4)
-        writeStoredHeader(w, Go.len(input), eof)
+        writeStoredHeader(w, length(input), eof)
         writeBytes(w, input)
         return
     end
@@ -449,20 +449,20 @@ function indexTokens(w::HuffmanBitWriter, tokens::Go.Slice{Token})# ::Tuple{numL
             continue
         end
 
-        length = len(t)
+        length = Base.length(t)
         off = offset(t)
         w.literalFreq[lengthCodesStart+lengthCode(length)] += 1
         w.offsetFreq[offsetCode(off)] += 1
     end
 
     # get the number of literals
-    numLiterals = Go.len(w.literalFreq)
+    numLiterals = Base.length(w.literalFreq)
     while w.literalFreq[numLiterals-1] == 0
         numLiterals -= 1
     end
 
     # get the number of offsets
-    numOffsets = Go.len(w.offsetFreq)
+    numOffsets = Base.length(w.offsetFreq)
     while numOffsets > 0 && w.offsetFreq[numOffsets-1] == 0
         numOffsets -= 1
     end
@@ -493,12 +493,12 @@ function writeTokens(
             continue
         end
         # Write the length
-        _len = len(t)
-        lc = lengthCode(_len)
+        length = Base.length(t)
+        lc = lengthCode(length)
         writeCode(w, leCodes[lc+lengthCodesStart])
         extraLengthBits = UInt(lengthExtraBits[lc])
         if extraLengthBits > 0
-            extraLength = Int32(_len - lengthBase[lc])
+            extraLength = Int32(length - lengthBase[lc])
             writeBits(w, extraLength, extraLengthBits)
         end
 
@@ -542,7 +542,7 @@ function writeBlockHuff(w::HuffmanBitWriter, eof::Bool, input::Go.Slice{UInt8})
     # Store bytes, if we don't get a reasonable improvement.
     ssize, storable = storedSize(w, input)
     if (storable && ssize < (size + size >> 4))
-        writeStoredHeader(w, Go.len(input), eof)
+        writeStoredHeader(w, length(input), eof)
         writeBytes(w, input)
         return
     end

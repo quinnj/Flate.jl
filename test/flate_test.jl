@@ -244,7 +244,7 @@ end
 
 @testset "TestTruncatedStreams" begin
     data = Go.Slice("\u00\f\u00\uf3\uffhello, world\u01\u00\u00\uff\uff")
-    for i = 1:(Go.len(data) - 2)
+    for i = 1:(length(data) - 2)
         r = Flate.NewReader(IOBuffer(copy(data[begin:i])))
         @test_throws Flate.CorruptInputError sprint(write, r)
     end
